@@ -1,0 +1,22 @@
+import { chromium } from 'playwright';
+import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { join, extname } from 'node:path';
+const BASE='/ib-questionfilter-web/'; const DIST=new URL('../dist/', import.meta.url).pathname;
+const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};
+const server=createServer(async(req,res)=>{let p=decodeURIComponent(new URL(req.url,'http://x').pathname);
+  if(!p.startsWith(BASE)){res.writeHead(404).end();return;} let f=join(DIST,p.slice(BASE.length)||'index.html');
+  try{if((await stat(f)).isDirectory())f=join(f,'index.html');}catch{f=join(DIST,'index.html');}
+  try{res.writeHead(200,{'content-type':T[extname(f)]??'application/octet-stream'}).end(await readFile(f));}catch{res.writeHead(404).end();}});
+await new Promise(r=>server.listen(0,r));
+const url=`http://127.0.0.1:${server.address().port}${BASE}`;
+const b=await chromium.launch({executablePath:process.env.CHROMIUM_PATH});
+const p=await b.newPage({viewport:{width:1100,height:1000}});
+await p.goto(url,{waitUntil:'networkidle'});
+await p.getByRole('button',{name:'Physics',exact:true}).click(); await p.waitForTimeout(150);
+const card=p.locator('.qcard',{hasText:'ammeter reading'}).first();
+await card.scrollIntoViewIfNeeded(); await card.screenshot({path:'scripts/diagram-physics.png'});
+await p.getByRole('button',{name:'Chemistry',exact:true}).click(); await p.waitForTimeout(150);
+const c2=p.locator('.qcard',{hasText:'electronic transitions'}).first();
+await c2.scrollIntoViewIfNeeded(); await c2.screenshot({path:'scripts/diagram-chem.png'});
+await b.close(); server.close(); console.log('screenshots written');
