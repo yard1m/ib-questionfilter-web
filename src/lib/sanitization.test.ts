@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { demoCorpus } from '../data/demo';
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -13,7 +14,9 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const repoRoot = new URL('../..', import.meta.url).pathname;
+// Decode URL path segments so the test also works when the checkout contains
+// spaces, as it does in the local app workspace.
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 describe('public bundle sanitization', () => {
   it('ships no PDF, book or corpus binary', () => {

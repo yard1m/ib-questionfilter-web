@@ -1,8 +1,9 @@
 // Fails the build if anything private, or any credential-like file, reaches dist/.
 import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DIST = new URL('../dist', import.meta.url).pathname;
+const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 const BANNED_EXT = ['.pdf', '.docx', '.epub', '.mobi', '.zip', '.7z', '.rar'];
 const BANNED_PATH = /(^|\/)\.env($|\.)|id_rsa|\.pem$|\.p12$|credentials\.json$/i;
 // Real IB session/subject/paper code format printed on genuine papers.
