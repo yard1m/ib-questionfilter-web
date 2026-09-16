@@ -10,10 +10,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:bundle": "node scripts/verify-bundle.mjs",
-    "check:browser": "node scripts/browser-check.mjs"
+    "check:browser": "node scripts/browser-check.mjs",
+    "check:corpus-pdfs": "node scripts/check-corpus-pdfs.mjs",
+    "predev": "node scripts/copy-pdfjs-assets.mjs",
+    "prebuild": "node scripts/copy-pdfjs-assets.mjs",
+    "dev:local": "node scripts/copy-pdfjs-assets.mjs && VITE_LOCAL_CORPUS=1 vite --mode local-corpus"
   },
   "dependencies": {
-    "jspdf": "^2.5.2",
+    "@supabase/supabase-js": "2.116.0",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.3.289",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

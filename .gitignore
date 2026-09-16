@@ -3,3 +3,4 @@ dist
 *.local
 scripts/*.png
 tsconfig.tsbuildinfo
+public/pdfjs

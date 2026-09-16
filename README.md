@@ -1,86 +1,90 @@
 # IB Question Filter - web
 
-Public web front end for the IB Question Filter. It reproduces the desktop app's
-filtering, deduplication and export behaviour.
+Authenticated web frontend for the private IB Question Filter question bank. The static frontend is
+safe to publish on GitHub Pages; question metadata and PDF objects are fetched only after Supabase
+Auth has established an allowlisted session.
 
-**This repository is deliberately sanitized.** It contains no IB question papers,
-no markschemes, no answer keys, no source books and no export of the private
-catalog. The data shipped here is a small synthetic demonstration corpus written
-for this repository, clearly labelled in the UI.
+## Runtime boundary
 
-## What it does
+The production bundle contains UI code, the PDF renderer, and public Supabase configuration only. It
+contains no question catalog, question paper, markscheme, source book, service-role key, or secret
+key. The private catalog and PDFs remain in the private Supabase Storage bucket and are not reachable
+from the public login page.
 
-- Subject selection for Chemistry, Mathematics and Physics.
-- Filters for examination year, session, level, paper and paper type.
-- Topic filtering, with two mutually exclusive refinements:
-  - **Only selected topics** - the subset rule. A question is shown only when
-    *all* of its topics fall inside your selection, so a question that also
-    tests something you did not pick is hidden.
-  - **Must include every selected topic** - keeps only questions carrying all
-    selected topics.
-- One canonical question per examination year. Where the same question appears
-  twice in a year (typically an HL and an SL paper) exactly one row is
-  selectable; the other occurrence is shown only as provenance.
-- Question viewing with diagrams, tables, formulas and options.
-- Selected-question PDF export.
-- A newly generated markscheme containing only the answer slices for the
-  selected questions. A whole source markscheme is never reproduced.
-- Responsive desktop and mobile layouts, with light and dark themes.
+`VITE_LOCAL_CORPUS=1` is accepted only by a Vite development server running with
+`--mode local-corpus`. The local route is never enabled by a production build.
 
-## The deduplication rule
+## Features
 
-The identity boundary is:
+- Username/password login and sign-out, with no public sign-up control.
+- Chemistry, Physics, and Mathematics AA questions, with HL/SL level filters.
+- Examination year, session, level, paper, and topic filters.
+- **Only selected topics** subset mode: every topic on a question must be selected.
+- **Require every selected topic** mode: a question must carry every selected topic.
+- Question-only preview of the selected question slices; there is no whole-paper route.
+- Selected-question PDF export and a selected-answer markscheme PDF export.
+- Year-aware canonical/shared-question display and responsive desktop/mobile layout.
 
-```
-subject + examination year + verified question content
-```
+## Supabase public configuration
 
-Including the examination year is what keeps identical content in two different
-years as **two** canonical questions, one per year, rather than collapsing them
-globally. Level, paper and time zone are used only to distinguish genuinely
-different content. Questions that merely share a topic, formula, method,
-structure or context are not duplicates.
+The client needs these build-time variables:
 
-A non-canonical occurrence is never independently selectable and can never be
-exported, so a generated PDF cannot contain two canonical rows from the same
-shared component.
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `VITE_SUPABASE_URL` | Yes | The project's `https://<ref>.supabase.co` URL. |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes | The publishable browser key, formerly called the anon key. |
+| `VITE_CORPUS_PREFIX` | Yes | The opaque Storage prefix produced by the private corpus build. |
+| `VITE_CORPUS_BUCKET` | No | Storage bucket name; defaults to `corpus`. |
+| `VITE_USERNAME_DOMAIN` | No | Reserved Auth domain used to map a username; defaults to `users.ibquestionbank.invalid`. |
 
-## Data mode
+The URL, publishable key, bucket, prefix, and username domain are public configuration values. Never
+put a `service_role` JWT, an `sb_secret_` key, a password, or any other secret in a `VITE_*` value.
+GitHub Actions should store these values as repository **Variables** with the names above. The
+workflow does not set `VITE_LOCAL_CORPUS`.
 
-The app ships with `isDemoData: true`. The private corpus is not published here
-and is not reachable from this site. Serving real question content would require
-a separately hosted authenticated backend with an explicit allowlist; GitHub
-Pages is static hosting and must never be used as the protection boundary.
+The username field accepts either the provisioned username or a full email address. Provisioning is
+an administrator-side Supabase Auth operation; this frontend does not create users or reveal whether
+an account exists.
 
 ## Development
 
 ```bash
 npm ci
-npm run dev            # local dev server
-npm test               # unit tests
-npm run build          # production build
-npm run verify:bundle  # fail if anything private reached dist/
-npm run check:browser  # headless browser checks against the built site
+npm test
+npm run build
+npm run verify:bundle
 ```
 
-`npm run check:browser` needs a Chromium binary. In a sandbox with a preinstalled
-build, point it at the binary:
+For a full local-corpus run, first generate the ignored manifest and objects from the repository root,
+then start the development-only route:
 
 ```bash
-CHROMIUM_PATH=/path/to/chrome node scripts/browser-check.mjs
+python3 Scripts/build_web_corpus.py --prefix c1-example-prefix --output .web-corpus
+cd web
+npm run dev:local
 ```
+
+The local browser check uses the same ignored `.web-corpus/upload-manifest.json`, confirms that all
+687 objects are available locally, and exercises preview, both PDF exports, filters, both topic
+modes, a rotated markscheme page, and the mobile layout. It also serves `dist/` at the GitHub Pages
+base path to verify the unauthenticated login shell:
+
+```bash
+npm run check:browser
+```
+
+`check:browser` needs a Chromium binary. Set `CHROMIUM_PATH=/path/to/chrome` when Playwright cannot
+find one. It never signs in and does not create users.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` builds on every push to `main`, runs the
-typecheck, unit tests and bundle verification, then publishes `dist/` with the
-official GitHub Pages actions.
+`.github/workflows/deploy.yml` builds from the `web/` package on pushes to `main`. Before enabling
+the workflow, set the required Supabase values above as GitHub Actions repository Variables. The
+workflow runs typecheck, unit tests, the production build, and the bundle privacy verifier before
+publishing `dist/` with the official GitHub Pages actions.
 
-The Vite `base` is set to `/ib-questionfilter-web/` to match the repository name,
-which is what a GitHub Pages project site requires. **If you rename the
-repository, update `repoName` in `vite.config.ts`** or every asset will 404.
-
-Repository settings must have **Settings → Pages → Source** set to
-**GitHub Actions**.
+GitHub Pages is only the static UI host and is not the protection boundary. Supabase Auth, allowlisted
+RLS, and the private Storage bucket protect the corpus. The Vite `base` is `/ib-questionfilter-web/`;
+update `repoName` in `vite.config.ts` if the Pages repository name changes.
 
 Expected URL: `https://yard1m.github.io/ib-questionfilter-web/`

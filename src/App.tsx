@@ -1,224 +1,120 @@
-import { useMemo, useState } from 'react';
-import { demoCorpus } from './data/demo';
-import { applyFilters, emptyFilters, facetsFor, pruneSelection, type FilterState } from './lib/filter';
-import { provenanceFor, validateGroups } from './lib/dedup';
-import { exportMarkschemePDF, exportQuestionsPDF } from './lib/pdf';
-import { QuestionCard } from './components/QuestionView';
-import type { SubjectId } from './lib/types';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import type { AppConfig } from './config';
+import { LoginInputError, loginEmail, signInErrorMessage } from './lib/auth';
+import type { Catalog } from './lib/catalog';
+import { AccessDeniedError, PdfMemoryCache, supabaseSource, type CorpusSource } from './lib/source';
+import { Login } from './components/Login';
+import { QuestionBrowser } from './components/QuestionBrowser';
 
-const SUBJECTS: { id: SubjectId; label: string }[] = [
-  { id: 'chemistry', label: 'Chemistry' },
-  { id: 'mathematics', label: 'Mathematics' },
-  { id: 'physics', label: 'Physics' },
-];
-const PAPER_LABEL: Record<string, string> = { paper1: 'Paper 1', paper2: 'Paper 2', paper3: 'Paper 3' };
+type CatalogState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ready'; catalog: Catalog }
+  | { status: 'denied' }
+  | { status: 'error' };
 
-function toggleIn<T>(set: Set<T>, v: T): Set<T> {
-  const next = new Set(set);
-  next.has(v) ? next.delete(v) : next.add(v);
-  return next;
+function Centered({ children }: { children: React.ReactNode }) {
+  return <main className="login"><div className="panel login-card">{children}</div></main>;
 }
 
-function ChipGroup<T extends string | number>({
-  legend, values, selected, format, onToggle,
-}: {
-  legend: string; values: T[]; selected: Set<T>;
-  format?: (v: T) => string; onToggle: (v: T) => void;
+export function App({ config, localSourceFactory }: {
+  config: AppConfig;
+  localSourceFactory?: (cache: PdfMemoryCache) => CorpusSource;
 }) {
-  if (values.length === 0) return null;
-  return (
-    <fieldset>
-      <legend>{legend}</legend>
-      <div className="chips">
-        {values.map((v) => (
-          <button
-            key={String(v)} type="button" className="chip"
-            aria-pressed={selected.has(v)} onClick={() => onToggle(v)}
-          >
-            {format ? format(v) : String(v)}
-          </button>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
+  const cache = useMemo(() => new PdfMemoryCache(), []);
+  const client = useMemo<SupabaseClient | null>(() => (config.localCorpus ? null : createClient(config.supabaseUrl, config.supabaseKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, flowType: 'pkce' },
+  })), [config]);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(config.localCorpus);
+  const [catalogState, setCatalogState] = useState<CatalogState>({ status: 'idle' });
 
-export function App() {
-  const corpus = demoCorpus;
-  const [subject, setSubject] = useState<SubjectId>('chemistry');
-  const [filters, setFilters] = useState<FilterState>(() => emptyFilters('chemistry'));
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [status, setStatus] = useState<string | null>(null);
+  const source = useMemo<CorpusSource | null>(() => {
+    if (config.localCorpus && localSourceFactory) return localSourceFactory(cache);
+    if (client && session) return supabaseSource(client, config.bucket, config.corpusPrefix, cache);
+    return null;
+  }, [config, client, session, cache, localSourceFactory]);
 
-  const groupIssues = useMemo(() => validateGroups(corpus), [corpus]);
-  const facets = useMemo(() => facetsFor(corpus, subject), [corpus, subject]);
-  const visible = useMemo(() => applyFilters(corpus, { ...filters, subject }), [corpus, filters, subject]);
+  useEffect(() => {
+    if (!client) return;
+    let active = true;
+    client.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data } = client.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (!next) {
+        cache.clear();
+        setCatalogState({ status: 'idle' });
+      }
+    });
+    return () => { active = false; data.subscription.unsubscribe(); };
+  }, [client, cache]);
 
-  function update(next: Partial<FilterState>) {
-    const merged: FilterState = { ...filters, ...next, subject };
-    // The subset rule and the require-all rule are mutually exclusive.
-    if (next.onlySelectedTopics) merged.requireAllTopics = false;
-    if (next.requireAllTopics) merged.onlySelectedTopics = false;
-    setFilters(merged);
-    setSelected((prev) => pruneSelection(prev, applyFilters(corpus, merged)));
-    setStatus(null);
+  const userId = session?.user.id ?? null;
+  useEffect(() => {
+    if (!source) return;
+    let active = true;
+    setCatalogState({ status: 'loading' });
+    source.loadCatalog()
+      .then((catalog) => { if (active) setCatalogState({ status: 'ready', catalog }); })
+      .catch((error) => { if (active) setCatalogState({ status: error instanceof AccessDeniedError ? 'denied' : 'error' }); });
+    return () => { active = false; };
+    // Reload only when the signed-in user (or the source) changes, not on token refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, config.localCorpus]);
+
+  const signIn = useCallback(async (username: string, password: string) => {
+    if (!client) return 'Sign-in is not available.';
+    let email: string;
+    try {
+      email = loginEmail(username, config.usernameDomain);
+    } catch (error) {
+      return error instanceof LoginInputError ? error.message : 'Incorrect username or password.';
+    }
+    const { error } = await client.auth.signInWithPassword({ email, password });
+    return error ? signInErrorMessage(error) : null;
+  }, [client, config.usernameDomain]);
+
+  const signOut = useCallback(async () => {
+    cache.clear();
+    setCatalogState({ status: 'idle' });
+    if (client) await client.auth.signOut();
+  }, [client, cache]);
+
+  const loadPdf = useCallback((key: string) => {
+    if (!source) return Promise.reject(new Error('Not signed in'));
+    return source.loadPdf(key);
+  }, [source]);
+
+  if (!authReady) return <Centered><p className="muted" role="status">Loading…</p></Centered>;
+  if (!config.localCorpus && !session) return <Login onSignIn={signIn} />;
+
+  const account = config.localCorpus ? 'Local corpus (development)' : (session?.user.email ?? '').replace(`@${config.usernameDomain}`, '');
+
+  switch (catalogState.status) {
+    case 'ready':
+      return <QuestionBrowser catalog={catalogState.catalog} loadPdf={loadPdf} account={account} onSignOut={signOut} />;
+    case 'denied':
+      return (
+        <Centered>
+          <h1>Access not enabled</h1>
+          <p>This account signed in successfully but has not been added to the question bank.</p>
+          <button type="button" className="btn wide" onClick={signOut}>Sign out</button>
+        </Centered>
+      );
+    case 'error':
+      return (
+        <Centered>
+          <h1>Could not load the question bank</h1>
+          <p className="muted">Check your connection and reload the page.</p>
+          <button type="button" className="btn wide" onClick={() => window.location.reload()}>Reload</button>
+        </Centered>
+      );
+    default:
+      return <Centered><p className="muted" role="status">Loading the question bank…</p></Centered>;
   }
-
-  function pickSubject(s: SubjectId) {
-    setSubject(s);
-    setFilters(emptyFilters(s));
-    setSelected(new Set());
-    setStatus(null);
-  }
-
-  function toggleQuestion(id: string) {
-    setSelected((prev) => toggleIn(prev, id));
-    setStatus(null);
-  }
-
-  const canExport = selected.size > 0;
-
-  return (
-    <>
-      {corpus.isDemoData && (
-        <div className="banner" role="status">
-          <strong>Demonstration data.</strong> {corpus.label} The private IB corpus is not published here and is
-          not reachable from this site.
-        </div>
-      )}
-
-      <header className="app">
-        <h1>IB Question Filter</h1>
-        <nav className="subjects" aria-label="Subject">
-          {SUBJECTS.map((s) => (
-            <button
-              key={s.id} type="button" aria-pressed={subject === s.id}
-              onClick={() => pickSubject(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      {groupIssues.length > 0 && (
-        <div className="banner" role="alert">
-          <strong>Duplicate/shared data problem.</strong> {groupIssues[0]}
-        </div>
-      )}
-
-      <div className="layout">
-        <aside className="panel" aria-label="Filters">
-          <h2>Filters</h2>
-
-          <ChipGroup legend="Examination year" values={facets.years} selected={filters.years}
-            onToggle={(v) => update({ years: toggleIn(filters.years, v) })} />
-          <ChipGroup legend="Session" values={facets.sessions} selected={filters.sessions}
-            onToggle={(v) => update({ sessions: toggleIn(filters.sessions, v) })} />
-          <ChipGroup legend="Level" values={facets.levels} selected={filters.levels}
-            format={(v) => v.toUpperCase()}
-            onToggle={(v) => update({ levels: toggleIn(filters.levels, v) })} />
-          <ChipGroup legend="Paper" values={facets.papers} selected={filters.papers}
-            format={(v) => PAPER_LABEL[v] ?? v}
-            onToggle={(v) => update({ papers: toggleIn(filters.papers, v) })} />
-          <ChipGroup legend="Paper type" values={facets.paperTypes} selected={filters.paperTypes}
-            onToggle={(v) => update({ paperTypes: toggleIn(filters.paperTypes, v) })} />
-
-          <fieldset>
-            <legend>Topics</legend>
-            <label className="toggle">
-              <input type="checkbox" checked={filters.onlySelectedTopics}
-                onChange={(e) => update({ onlySelectedTopics: e.target.checked })} />
-              <span>
-                Only selected topics
-                <small>Hides any question that also tests a topic you have not selected.</small>
-              </span>
-            </label>
-            <label className="toggle">
-              <input type="checkbox" checked={filters.requireAllTopics}
-                onChange={(e) => update({ requireAllTopics: e.target.checked })} />
-              <span>
-                Must include every selected topic
-                <small>Keeps only questions carrying all of your selected topics.</small>
-              </span>
-            </label>
-            <div className="topics">
-              {facets.topics.map((t) => (
-                <label className="topic" key={t}>
-                  <input type="checkbox" checked={filters.topics.has(t)}
-                    onChange={() => update({ topics: toggleIn(filters.topics, t) })} />
-                  <span>{t}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-
-          <button type="button" className="btn secondary" onClick={() => pickSubject(subject)}>
-            Reset filters
-          </button>
-        </aside>
-
-        <main>
-          <div className="toolbar">
-            <span className="count">
-              {visible.length} question{visible.length === 1 ? '' : 's'} &middot; {selected.size} selected
-            </span>
-            <button type="button" className="btn secondary" disabled={visible.length === 0}
-              onClick={() => setSelected(new Set(visible.map((q) => q.id)))}>
-              Select all shown
-            </button>
-            <button type="button" className="btn secondary" disabled={selected.size === 0}
-              onClick={() => setSelected(new Set())}>
-              Clear
-            </button>
-            <button type="button" className="btn" disabled={!canExport}
-              onClick={async () => {
-                setStatus('Preparing question PDF...');
-                const r = await exportQuestionsPDF(corpus, selected);
-                setStatus(`Exported ${r.count} question${r.count === 1 ? '' : 's'} to ${r.filename}.`);
-              }}>
-              Export questions PDF
-            </button>
-            <button type="button" className="btn" disabled={!canExport}
-              onClick={async () => {
-                setStatus('Generating markscheme...');
-                const r = await exportMarkschemePDF(corpus, selected);
-                setStatus(
-                  `Generated a markscheme with ${r.count} answer${r.count === 1 ? '' : 's'} to ${r.filename}` +
-                  (r.missing ? `. ${r.missing} selected question(s) have no answer slice and are listed as missing.` : '.'),
-                );
-              }}>
-              Generate markscheme
-            </button>
-          </div>
-
-          {status && <div className="status" role="status">{status}</div>}
-
-          {visible.length === 0 ? (
-            <div className="panel empty">
-              <p><strong>No questions match these filters.</strong></p>
-              <p>
-                {filters.onlySelectedTopics && filters.topics.size === 0
-                  ? 'The "Only selected topics" rule needs at least one topic selected.'
-                  : 'Try clearing a filter, or reset the panel on the left.'}
-              </p>
-            </div>
-          ) : (
-            <div className="qlist">
-              {visible.map((q) => (
-                <QuestionCard
-                  key={q.id} question={q} selected={selected.has(q.id)}
-                  provenance={provenanceFor(corpus, q.id)} onToggle={toggleQuestion}
-                />
-              ))}
-            </div>
-          )}
-        </main>
-      </div>
-
-      <footer className="app">
-        One canonical question per examination year. Identical content in different years is kept separately for each year.
-      </footer>
-    </>
-  );
 }
