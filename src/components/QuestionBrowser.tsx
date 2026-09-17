@@ -255,6 +255,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         </main>
       </div>
 
+      <footer className="archive-footer" aria-label="Site attribution">
+        <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
+        <div className="archive-credit">Built By yard1m_42</div>
+      </footer>
+
       {preview && <Preview question={preview} loadPdf={loadPdf} onClose={closePreview} />}
     </>
   );

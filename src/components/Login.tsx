@@ -57,6 +57,10 @@ export function Login({
           <button className="btn wide" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
           <p className="muted small">There is no public sign-up. Ask the owner for an account.</p>
         </form>
+        <footer className="archive-footer" aria-label="Site attribution">
+          <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
+          <div className="archive-credit">Built By yard1m_42</div>
+        </footer>
       </div>
     </main>
   );
