@@ -297,7 +297,7 @@ html[data-design="archive"] .archive-motto {
   overflow-wrap: anywhere; font-size: 11px; letter-spacing: .24em; line-height: 1.5;
 }
 html[data-design="archive"] .archive-credit {
-  color: var(--muted); font-size: 10px; letter-spacing: .16em;
+  color: var(--muted); font-size: 10px; letter-spacing: .16em; text-transform: none;
 }
 
 @media (max-width: 900px) {
