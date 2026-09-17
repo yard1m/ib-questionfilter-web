@@ -23,6 +23,8 @@ from the public login page.
 - **Require every selected topic** mode: a question must carry every selected topic.
 - Question-only preview of the selected question slices; there is no whole-paper route.
 - Selected-question PDF export and a selected-answer markscheme PDF export.
+- Reversible **Archive** and **Classic** visual modes. The selected mode is
+  stored in the browser and does not change filtering, previews or exports.
 - Year-aware canonical/shared-question display and responsive desktop/mobile layout.
 
 ## Supabase public configuration

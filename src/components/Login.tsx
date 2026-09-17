@@ -1,6 +1,16 @@
 import { useState, type FormEvent } from 'react';
+import type { DesignMode } from '../lib/design';
+import { DesignToggle } from './DesignToggle';
 
-export function Login({ onSignIn }: { onSignIn: (username: string, password: string) => Promise<string | null> }) {
+export function Login({
+  designMode,
+  onDesignModeChange,
+  onSignIn,
+}: {
+  designMode: DesignMode;
+  onDesignModeChange: (mode: DesignMode) => void;
+  onSignIn: (username: string, password: string) => Promise<string | null>;
+}) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -21,27 +31,33 @@ export function Login({ onSignIn }: { onSignIn: (username: string, password: str
 
   return (
     <main className="login">
-      <form className="panel login-card" onSubmit={submit} aria-labelledby="login-title">
-        <h1 id="login-title">IB Question Filter</h1>
-        <p className="muted">Private question bank. Sign in with the account you were given.</p>
-        <label className="field">
-          <span>Username</span>
-          <input
-            name="username" autoComplete="username" autoCapitalize="none" spellCheck={false}
-            value={username} onChange={(e) => setUsername(e.target.value)} required
-          />
-        </label>
-        <label className="field">
-          <span>Password</span>
-          <input
-            name="password" type="password" autoComplete="current-password"
-            value={password} onChange={(e) => setPassword(e.target.value)} required
-          />
-        </label>
-        {error && <p className="error" role="alert">{error}</p>}
-        <button className="btn wide" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <p className="muted small">There is no public sign-up. Ask the owner for an account.</p>
-      </form>
+      <div className="login-frame">
+        <div className="login-head">
+          <div className="archive-wordmark" aria-hidden="true">LITTLE <strong>RED</strong> BANK</div>
+          <DesignToggle mode={designMode} onChange={onDesignModeChange} />
+        </div>
+        <form className="panel login-card" onSubmit={submit} aria-labelledby="login-title">
+          <h1 id="login-title">IB Question Filter</h1>
+          <p className="muted">Private question bank. Sign in with the account you were given.</p>
+          <label className="field">
+            <span>Username</span>
+            <input
+              name="username" autoComplete="username" autoCapitalize="none" spellCheck={false}
+              value={username} onChange={(e) => setUsername(e.target.value)} required
+            />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input
+              name="password" type="password" autoComplete="current-password"
+              value={password} onChange={(e) => setPassword(e.target.value)} required
+            />
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="btn wide" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+          <p className="muted small">There is no public sign-up. Ask the owner for an account.</p>
+        </form>
+      </div>
     </main>
   );
 }

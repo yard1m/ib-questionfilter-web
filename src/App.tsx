@@ -4,6 +4,7 @@ import type { AppConfig } from './config';
 import { LoginInputError, loginEmail, signInErrorMessage } from './lib/auth';
 import type { Catalog } from './lib/catalog';
 import { AccessDeniedError, PdfMemoryCache, supabaseSource, type CorpusSource } from './lib/source';
+import { readDesignMode, saveDesignMode, type DesignMode } from './lib/design';
 import { Login } from './components/Login';
 import { QuestionBrowser } from './components/QuestionBrowser';
 
@@ -29,6 +30,12 @@ export function App({ config, localSourceFactory }: {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(config.localCorpus);
   const [catalogState, setCatalogState] = useState<CatalogState>({ status: 'idle' });
+  const [designMode, setDesignMode] = useState<DesignMode>(() => readDesignMode());
+
+  useEffect(() => {
+    document.documentElement.dataset.design = designMode;
+    saveDesignMode(designMode);
+  }, [designMode]);
 
   const source = useMemo<CorpusSource | null>(() => {
     if (config.localCorpus && localSourceFactory) return localSourceFactory(cache);
@@ -91,13 +98,24 @@ export function App({ config, localSourceFactory }: {
   }, [source]);
 
   if (!authReady) return <Centered><p className="muted" role="status">Loading…</p></Centered>;
-  if (!config.localCorpus && !session) return <Login onSignIn={signIn} />;
+  if (!config.localCorpus && !session) {
+    return <Login designMode={designMode} onDesignModeChange={setDesignMode} onSignIn={signIn} />;
+  }
 
   const account = config.localCorpus ? 'Local corpus (development)' : (session?.user.email ?? '').replace(`@${config.usernameDomain}`, '');
 
   switch (catalogState.status) {
     case 'ready':
-      return <QuestionBrowser catalog={catalogState.catalog} loadPdf={loadPdf} account={account} onSignOut={signOut} />;
+      return (
+        <QuestionBrowser
+          catalog={catalogState.catalog}
+          loadPdf={loadPdf}
+          account={account}
+          onSignOut={signOut}
+          designMode={designMode}
+          onDesignModeChange={setDesignMode}
+        />
+      );
     case 'denied':
       return (
         <Centered>

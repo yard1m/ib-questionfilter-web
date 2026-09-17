@@ -4,6 +4,8 @@ import { questionTitle } from '../lib/catalog';
 import {
   defaultFilters, filterQuestions, pruneSelection, setTopicMode, toggleFacet, toggleTopic, type Filters,
 } from '../lib/filter';
+import type { DesignMode } from '../lib/design';
+import { DesignToggle } from './DesignToggle';
 import { Preview } from './Preview';
 
 type LoadPdf = (key: string) => Promise<Uint8Array>;
@@ -30,11 +32,13 @@ function download(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
+export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
   account: string;
   onSignOut: () => void;
+  designMode: DesignMode;
+  onDesignModeChange: (mode: DesignMode) => void;
 }) {
   const [subjectId, setSubjectId] = useState(catalog.subjects[0]?.id ?? '');
   const subject = catalog.subjects.find((s) => s.id === subjectId) ?? catalog.subjects[0];
@@ -76,6 +80,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
 
   const chosen = visible.filter((q) => selected.has(q.id));
   const answers = chosen.filter((q) => q.answerSlices).length;
+  const pagesToCompile = new Set(chosen.flatMap((q) => q.questionSlices.map((slice) => `${q.id}:${slice.page}`))).size;
 
   async function exportSelection() {
     if (!chosen.length || busy) return;
@@ -116,16 +121,30 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
   return (
     <>
       <header className="app">
-        <h1>IB Question Filter</h1>
+        <div className="app-topline">
+          <div className="archive-kicker" aria-hidden="true">L.R.B. &nbsp; ARCHIVUM QUAESTIONUM &nbsp; · &nbsp; ACCESS BY INVITATION</div>
+          <div className="account">
+            <span className="muted small account-name">{account}</span>
+            <DesignToggle mode={designMode} onChange={onDesignModeChange} />
+            <button type="button" className="btn secondary" onClick={onSignOut}>Sign out</button>
+          </div>
+        </div>
+        <div className="masthead">
+          <div className="app-title">
+            <div className="archive-wordmark" aria-hidden="true">LITTLE <strong>RED</strong> BANK</div>
+            <h1>IB Question Filter</h1>
+            <p className="archive-subtitle" aria-hidden="true">QUESTION ARCHIVE &nbsp;·&nbsp; FILTER &nbsp;·&nbsp; COMPILE &nbsp;·&nbsp; ISSUE MMXXVI</p>
+          </div>
+          <div className="archive-seal" aria-hidden="true"><span>Q</span></div>
+        </div>
         <nav className="subjects" aria-label="Subject">
-          {catalog.subjects.map((s) => (
-            <button key={s.id} type="button" aria-pressed={s.id === subject.id} onClick={() => chooseSubject(s.id)}>{s.name}</button>
+          {catalog.subjects.map((s, index) => (
+            <button key={s.id} type="button" aria-pressed={s.id === subject.id} onClick={() => chooseSubject(s.id)}>
+              <span className="subject-index" aria-hidden="true">{['I', 'II', 'III'][index] ?? String(index + 1)}</span>
+              <span>{s.name}{s.id === 'mathematics' ? ' AA' : ''}</span>
+            </button>
           ))}
         </nav>
-        <div className="account">
-          <span className="muted small">{account}</span>
-          <button type="button" className="btn secondary" onClick={onSignOut}>Sign out</button>
-        </div>
       </header>
 
       <div className="layout">
@@ -168,6 +187,12 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
         </aside>
 
         <main>
+          <section className="archive-stats" aria-label="Selection summary">
+            <div><strong>{visible.length}</strong><span>IN SCOPE</span></div>
+            <div><strong>{chosen.length}</strong><span>SELECTED</span></div>
+            <div><strong>{answers}</strong><span>MARKSCHEME ANSWERS</span></div>
+            <div><strong>{pagesToCompile}</strong><span>PAGES TO COMPILE</span></div>
+          </section>
           <div className="toolbar">
             <div className="count">
               <strong>{visible.length} matching question{visible.length === 1 ? '' : 's'}</strong>
@@ -200,10 +225,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
             </div>
           ) : (
             <ul className="qlist">
-              {visible.map((q) => (
+              {visible.map((q, index) => (
                 <li key={q.id} className={`qcard${selected.has(q.id) ? ' selected' : ''}`}>
                   <input type="checkbox" checked={selected.has(q.id)} onChange={() => toggleQuestion(q.id)}
                     aria-label={`Select ${questionTitle(q)}`} />
+                  <span className="qnumber" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
                   <div className="qinfo">
                     <div className="qtitle">{questionTitle(q)}</div>
                     <div className="qtopics">
@@ -218,7 +244,10 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut }: {
                       </div>
                     )}
                   </div>
-                  <button type="button" className="btn secondary" onClick={() => setPreview(q)}>Preview</button>
+                  <button type="button" className="btn secondary qaction" onClick={() => setPreview(q)}>
+                    <span className="classic-action">Preview</span>
+                    <span className="archive-action">Read</span>
+                  </button>
                 </li>
               ))}
             </ul>
