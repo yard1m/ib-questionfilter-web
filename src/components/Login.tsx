@@ -36,6 +36,10 @@ export function Login({
           <div className="archive-wordmark" aria-hidden="true">LITTLE <strong>RED</strong> BANK</div>
           <DesignToggle mode={designMode} onChange={onDesignModeChange} />
         </div>
+        <div className="archive-attribution" aria-label="Site attribution">
+          <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
+          <div className="archive-credit">Built By yard1m_42</div>
+        </div>
         <form className="panel login-card" onSubmit={submit} aria-labelledby="login-title">
           <h1 id="login-title">IB Question Filter</h1>
           <p className="muted">Private question bank. Sign in with the account you were given.</p>
@@ -57,10 +61,6 @@ export function Login({
           <button className="btn wide" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
           <p className="muted small">There is no public sign-up. Ask the owner for an account.</p>
         </form>
-        <footer className="archive-footer" aria-label="Site attribution">
-          <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
-          <div className="archive-credit">Built By yard1m_42</div>
-        </footer>
       </div>
     </main>
   );

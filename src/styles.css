@@ -143,7 +143,7 @@ legend { font-size: 12px; font-weight: 650; color: var(--muted); padding: 0 0 6p
   border-radius: 999px; padding: 1px 5px; background: var(--accent-soft);
   color: var(--accent); font-size: 9px; letter-spacing: .08em;
 }
-.archive-footer { display: none; }
+.archive-attribution { display: none; }
 
 /* Archive design: a dark editorial archive inspired by the supplied reference, without changing data flow. */
 html[data-design="archive"] {
@@ -201,10 +201,20 @@ html[data-design="archive"] .archive-subtitle {
   display: block; margin: 17px 0 0; color: var(--gold); font-size: 10px; letter-spacing: .28em;
   text-transform: uppercase;
 }
+html[data-design="archive"] .archive-attribution {
+  display: grid; gap: 5px; margin-top: 18px; padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--accent); text-transform: uppercase;
+}
+html[data-design="archive"] .archive-motto {
+  overflow-wrap: anywhere; color: var(--gold); font-size: 11px; letter-spacing: .18em; line-height: 1.45;
+}
+html[data-design="archive"] .archive-credit {
+  color: var(--muted); font-size: 10px; letter-spacing: .16em; text-transform: none;
+}
 html[data-design="archive"] .archive-seal {
   display: grid; place-items: center; width: 78px; height: 78px; flex: none;
   border: 1px solid var(--gold); box-shadow: inset 0 0 0 7px rgba(200, 164, 90, .08), inset 0 0 0 9px var(--gold);
-  color: var(--accent); font-size: 36px; font-weight: 700; transform: rotate(3deg);
+  color: var(--accent); font-size: 31px; font-weight: 700; transform: rotate(3deg);
 }
 html[data-design="archive"] .archive-seal span { transform: rotate(-3deg); }
 html[data-design="archive"] .subjects {
@@ -288,17 +298,6 @@ html[data-design="archive"] .field input { border-radius: 0; border-color: var(-
 html[data-design="archive"] .modal-backdrop { background: rgba(10, 8, 12, .82); }
 html[data-design="archive"] .modal { border: 1px solid var(--gold); border-radius: 0; background: var(--card); }
 html[data-design="archive"] .modal-head { background: var(--card); }
-html[data-design="archive"] .archive-footer {
-  display: grid; gap: 8px; margin: 0 32px 34px; padding: 18px 8px 0;
-  border-top: 1px solid rgba(200, 164, 90, .48); color: var(--gold); text-align: center;
-  text-transform: uppercase;
-}
-html[data-design="archive"] .archive-motto {
-  overflow-wrap: anywhere; font-size: 11px; letter-spacing: .24em; line-height: 1.5;
-}
-html[data-design="archive"] .archive-credit {
-  color: var(--muted); font-size: 10px; letter-spacing: .16em; text-transform: none;
-}
 
 @media (max-width: 900px) {
   html[data-design="archive"] header.app { padding: 0 18px; }
@@ -312,17 +311,19 @@ html[data-design="archive"] .archive-credit {
 @media (max-width: 560px) {
   html[data-design="archive"] .app-topline { align-items: flex-start; flex-direction: column; gap: 10px; padding: 12px 0; }
   html[data-design="archive"] .account { width: 100%; justify-content: space-between; flex-wrap: wrap; }
-  html[data-design="archive"] .masthead { padding: 24px 0 21px; }
+  html[data-design="archive"] .masthead { gap: 14px; padding: 24px 0 21px; }
+  html[data-design="archive"] .app-title { min-width: 0; }
   html[data-design="archive"] .archive-wordmark { font-size: 35px; }
   html[data-design="archive"] .archive-subtitle { font-size: 8px; letter-spacing: .16em; }
   html[data-design="archive"] .archive-seal { width: 58px; height: 58px; font-size: 27px; }
   html[data-design="archive"] .archive-stats > div { min-height: 80px; padding: 12px; }
   html[data-design="archive"] .archive-stats strong { font-size: 28px; }
   html[data-design="archive"] .archive-stats span { font-size: 8px; }
+  html[data-design="archive"] .archive-attribution { margin-top: 14px; padding-left: 9px; }
+  html[data-design="archive"] .archive-motto { font-size: 9px; letter-spacing: .08em; }
+  html[data-design="archive"] .archive-credit { font-size: 9px; letter-spacing: .1em; }
   html[data-design="archive"] .toolbar { align-items: stretch; }
   html[data-design="archive"] .toolbar .count { flex-basis: 100%; }
   html[data-design="archive"] .qcard { grid-template-columns: auto 30px minmax(0, 1fr); align-items: start; padding: 14px 4px; }
   html[data-design="archive"] .qcard > .qaction { grid-column: 3; justify-self: start; }
-  html[data-design="archive"] .archive-footer { margin: 0 18px 24px; }
-  html[data-design="archive"] .archive-motto { font-size: 9px; letter-spacing: .1em; }
 }

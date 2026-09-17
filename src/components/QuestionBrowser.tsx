@@ -134,8 +134,12 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
             <div className="archive-wordmark" aria-hidden="true">LITTLE <strong>RED</strong> BANK</div>
             <h1>IB Question Filter</h1>
             <p className="archive-subtitle" aria-hidden="true">QUESTION ARCHIVE &nbsp;·&nbsp; FILTER &nbsp;·&nbsp; COMPILE &nbsp;·&nbsp; ISSUE MMXXVI</p>
+            <div className="archive-attribution" aria-label="Site attribution">
+              <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
+              <div className="archive-credit">Built By yard1m_42</div>
+            </div>
           </div>
-          <div className="archive-seal" aria-hidden="true"><span>Q</span></div>
+          <div className="archive-seal" role="img" aria-label="aleph-null"><span aria-hidden="true">ℵ₀</span></div>
         </div>
         <nav className="subjects" aria-label="Subject">
           {catalog.subjects.map((s, index) => (
@@ -254,11 +258,6 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           )}
         </main>
       </div>
-
-      <footer className="archive-footer" aria-label="Site attribution">
-        <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
-        <div className="archive-credit">Built By yard1m_42</div>
-      </footer>
 
       {preview && <Preview question={preview} loadPdf={loadPdf} onClose={closePreview} />}
     </>
