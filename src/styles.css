@@ -327,3 +327,16 @@ html[data-design="archive"] .modal-head { background: var(--card); }
   html[data-design="archive"] .qcard { grid-template-columns: auto 30px minmax(0, 1fr); align-items: start; padding: 14px 4px; }
   html[data-design="archive"] .qcard > .qaction { grid-column: 3; justify-self: start; }
 }
+
+/* Admin panel */
+.account-tools { grid-template-columns: minmax(0, 1fr) 300px; }
+.admin-table-wrap { overflow-x: auto; margin: 12px 0; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-table th, .admin-table td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.admin-table tr.flagged td { background: color-mix(in srgb, #c0392b 8%, transparent); }
+.admin-table td.warn { color: #b9770e; }
+.admin-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.admin-actions .btn { padding: 3px 8px; font-size: 12px; }
+.admin .badge { margin-left: 6px; font-size: 11px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
+.audit-log { max-height: 240px; overflow-y: auto; padding-left: 18px; }
+@media (max-width: 760px) { .account-tools { grid-template-columns: 1fr; } }

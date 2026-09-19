@@ -43,12 +43,27 @@ async function embedRegion(out: PDFDocument, page: PDFPage, region: Rect) {
   return out.embedPage(page, region);
 }
 
+/**
+ * Prints a small line naming the account and date at the foot of every page, so a PDF that
+ * leaves the group still says whose account exported it. Empty stamps are skipped.
+ */
+export async function stampPages(out: PDFDocument, stamp: string | undefined): Promise<void> {
+  const text = (stamp ?? '').trim();
+  if (!text) return;
+  const font = await out.embedFont(StandardFonts.Helvetica);
+  for (const page of out.getPages()) {
+    const { width } = page.getSize();
+    const size = Math.max(4.5, Math.min(7, width / 110));
+    page.drawText(text, { x: 4, y: 3, size, font, color: rgb(0.45, 0.45, 0.45), opacity: 0.85, maxWidth: width - 8 });
+  }
+}
+
 function pageBox(page: PDFPage): PageBox {
   const media = page.getMediaBox();
   return { x: media.x, y: media.y, width: media.width, height: media.height, rotation: normaliseRotation(page.getRotation().angle) };
 }
 
-export async function exportQuestions(questions: Question[], load: LoadPdf, title: string): Promise<ExportResult> {
+export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string): Promise<ExportResult> {
   const out = await PDFDocument.create();
   out.setTitle(title);
   out.setCreator('IB Question Filter');
@@ -68,10 +83,11 @@ export async function exportQuestions(questions: Question[], load: LoadPdf, titl
       if (embedded) target.drawPage(embedded, { x: p.x, y: p.y, xScale: 1, yScale: 1, rotate: degrees(p.rotate) });
     }
   }
+  await stampPages(out, stamp);
   return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
-export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string): Promise<ExportResult> {
+export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string): Promise<ExportResult> {
   const out = await PDFDocument.create();
   out.setTitle(title);
   out.setCreator('IB Question Filter');
@@ -133,6 +149,7 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
       }
     }
   }
+  await stampPages(out, stamp);
   return { bytes: await out.save(), pages: out.getPageCount(), exported, skipped };
 }
 

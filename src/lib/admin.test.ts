@@ -63,3 +63,22 @@ describe('callMembers', () => {
     expect(result).toEqual({ ok: false, status: 403, error: 'Admins only.' });
   });
 });
+
+describe('member display helpers', () => {
+  const now = new Date('2026-09-19T12:00:00Z');
+  it('describes last-seen times', async () => {
+    const { describeLastSeen } = await import('./admin');
+    expect(describeLastSeen(null, now)).toBe('never');
+    expect(describeLastSeen('2026-09-19T08:00:00Z', now)).toBe('today');
+    expect(describeLastSeen('2026-09-18T08:00:00Z', now)).toBe('yesterday');
+    expect(describeLastSeen('2026-08-01T08:00:00Z', now)).toBe('49 days ago');
+  });
+  it('derives one status per account', async () => {
+    const { memberStatus } = await import('./admin');
+    const base = { user_id: 'u', note: null, created_at: '', username: 'a', last_sign_in_at: null };
+    expect(memberStatus({ ...base }, now)).toBe('active');
+    expect(memberStatus({ ...base, suspended_at: '2026-09-01T00:00:00Z' }, now)).toBe('suspended');
+    expect(memberStatus({ ...base, expires_at: '2026-09-18T23:59:59Z' }, now)).toBe('expired');
+    expect(memberStatus({ ...base, expires_at: '2026-12-31T23:59:59Z' }, now)).toBe('active');
+  });
+});

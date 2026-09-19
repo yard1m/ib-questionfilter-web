@@ -32,7 +32,7 @@ function download(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools }: {
+export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
   account: string;
@@ -41,6 +41,10 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   onDesignModeChange: (mode: DesignMode) => void;
   /** Password change, and member management for admins; opened from the Account button. */
   accountTools?: ReactNode;
+  /** Printed at the foot of every exported page (the account name and date). */
+  stamp?: string;
+  /** Counts previews and exports for the admin panel's usage columns. */
+  onActivity?: (kind: 'preview' | 'export' | 'markscheme', subject: string, items: number) => void;
 }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [subjectId, setSubjectId] = useState(catalog.subjects[0]?.id ?? '');
@@ -92,11 +96,13 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     try {
       const { exportMarkscheme, exportQuestions } = await import('../lib/exportPdf');
       const base = `${subject.name} Filtered Questions`;
-      const questions = await exportQuestions(chosen, loadPdf, base);
+      const questions = await exportQuestions(chosen, loadPdf, base, stamp);
+      onActivity?.('export', subject.id, chosen.length);
       download(questions.bytes, `${base}.pdf`);
       let text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
       if (withMarkscheme) {
-        const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`);
+        const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, stamp);
+        onActivity?.('markscheme', subject.id, chosen.length);
         download(markscheme.bytes, `${base} Markscheme.pdf`);
         text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
         text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
@@ -257,7 +263,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                       </div>
                     )}
                   </div>
-                  <button type="button" className="btn secondary qaction" onClick={() => setPreview(q)}>
+                  <button type="button" className="btn secondary qaction" onClick={() => { setPreview(q); onActivity?.('preview', subject.id, 1); }}>
                     <span className="classic-action">Preview</span>
                     <span className="archive-action">Read</span>
                   </button>

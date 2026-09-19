@@ -82,3 +82,19 @@ describe('PDF exports', () => {
     await expect(exportMarkscheme([blankQuestion], async (key) => files[key], 'Blank answer')).rejects.toThrow(/missing Contents/i);
   });
 });
+
+describe('export stamp', () => {
+  it('prints the account line on every page and skips an empty stamp', async () => {
+    const { PDFDocument } = await import('pdf-lib');
+    const { stampPages } = await import('./exportPdf');
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 100]);
+    doc.addPage([842, 595]);
+    const before = await doc.save();
+    await stampPages(doc, '   ');
+    expect((await doc.save()).length).toBe(before.length);
+    await stampPages(doc, 'Exported for friend1 · 2026-09-19');
+    expect((await doc.save()).length).toBeGreaterThan(before.length);
+    expect(doc.getPageCount()).toBe(2);
+  });
+});

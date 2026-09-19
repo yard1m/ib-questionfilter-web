@@ -60,6 +60,11 @@ export function Login({
           {error && <p className="error" role="alert">{error}</p>}
           <button className="btn wide" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
           <p className="muted small">There is no public sign-up. Ask the owner for an account.</p>
+          <p className="muted small">
+            Accounts are personal. Each one works on one device at a time, exported PDFs show the account
+            name, and sign-ins (time, browser and a scrambled network code), previews and exports are
+            recorded for the owner.
+          </p>
         </form>
       </div>
     </main>
