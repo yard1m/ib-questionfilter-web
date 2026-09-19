@@ -91,7 +91,7 @@ async function loadLocalCorpus() {
   ]);
   const manifest = JSON.parse(manifestText);
   const catalog = JSON.parse(catalogText);
-  requireCondition(manifest.objectCount === 687 && manifest.objects?.length === 687, 'local manifest must contain exactly 687 objects');
+  requireCondition(manifest.objectCount === 717 && manifest.objects?.length === 717, 'local manifest must contain exactly 717 objects');
   return { manifest, catalog, objects: new Map(manifest.objects.map((item) => [item.key, item])) };
 }
 
@@ -328,8 +328,8 @@ async function main() {
     const subjects = local.catalog.subjects.map((subject) => subjectInfo(local.catalog, subject));
     const subjectById = new Map(subjects.map((subject) => [subject.id, subject]));
 
-    await runCheck('local manifest contains all 687 expected objects', async () => {
-      requireCondition(local.manifest.objects.length === 687, `found ${local.manifest.objects.length}`);
+    await runCheck('local manifest contains all 717 expected objects', async () => {
+      requireCondition(local.manifest.objects.length === 717, `found ${local.manifest.objects.length}`);
       return `${local.manifest.objects.length} objects`;
     });
 
@@ -389,7 +389,8 @@ async function main() {
       await page.goto(localVite.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       await waitForCards(page);
       requireCondition(await page.locator('input[name="username"]').count() === 0, 'login form is shown in local mode');
-      requireCondition((await page.locator('.account').innerText()).includes('Local corpus (development)'), 'local account marker is missing');
+      // The archive design renders the account name uppercase, so compare the rendered text case-insensitively.
+      requireCondition((await page.locator('.account').innerText()).toLowerCase().includes('local corpus (development)'), 'local account marker is missing');
       return `${await page.locator('.qcard').count()} question cards`;
     });
     await runCheck('local-corpus app makes no Supabase request', async () => {
@@ -397,9 +398,13 @@ async function main() {
       return 'all local data requests stayed on the dev server';
     });
 
+    // The subject buttons carry the course suffix the app prints (Mathematics AA), so match the
+    // subject name inside the rendered label rather than as the whole accessible name.
+    const subjectButton = (name) => page.locator('nav.subjects button').filter({ hasText: name }).first();
+
     for (const subject of subjects) {
       await runCheck(`${subject.name} subject selection shows questions`, async () => {
-        await page.getByRole('button', { name: subject.name, exact: true }).click();
+        await subjectButton(subject.name).click();
         await waitForCards(page);
         requireCondition(await page.locator('.qcard').count() > 0, 'no question cards');
         return `${await page.locator('.qcard').count()} cards`;
@@ -408,7 +413,7 @@ async function main() {
 
     const physics = subjectById.get('physics');
     requireCondition(physics, 'the local catalog has no Physics subject');
-    await page.getByRole('button', { name: physics.name, exact: true }).click();
+    await subjectButton(physics.name).click();
     await waitForCards(page);
     await runCheck('year filter narrows the local app', async () => {
       const keep = physics.years.find((year) => physics.questions.some((question) => local.catalog.documents[question.doc].year === year));
@@ -493,7 +498,8 @@ async function main() {
     const rotatedCard = page.locator('.qcard').filter({ hasText: `${rotated.question.label} · ${rotated.document.paper}` }).first();
     await runCheck('selected question preview renders only the selected slices', async () => {
       requireCondition(await rotatedCard.count() === 1, 'rotated question card is unavailable');
-      await rotatedCard.getByRole('button', { name: 'Preview', exact: true }).click();
+      // The card action carries both design labels ("Preview" and "Read"); only one is ever shown.
+      await rotatedCard.locator('button.qaction').first().click();
       const dialog = page.getByRole('dialog');
       await dialog.waitFor({ state: 'visible', timeout: 30_000 });
       await page.waitForFunction(

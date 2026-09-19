@@ -51,8 +51,22 @@ describe('public repository sanitization', () => {
   it('fetches corpus data only through the private Supabase bucket', () => {
     for (const p of sources) {
       if (p.endsWith('.test.ts') || p.endsWith('localSource.ts')) continue;
+      // The dev-only triage page (compiled out of production; the bundle
+      // verifier enforces its absence from dist/) fetches only loopback
+      // dev-middleware endpoints, covered by the next test.
+      if (p.includes('/triage/')) continue;
       const text = readFileSync(p, 'utf8');
       expect(text, p).not.toMatch(/\bfetch\s*\(/);
+      expect(text, p).not.toMatch(/XMLHttpRequest/);
+    }
+  });
+
+  it('the dev-only triage page fetches only loopback middleware endpoints', () => {
+    for (const p of sources.filter((entry) => entry.includes('/triage/') && entry.endsWith('.tsx'))) {
+      const text = readFileSync(p, 'utf8');
+      for (const match of text.matchAll(/\bfetch\s*\(\s*[`'\"]([^`'\"$]+)/g)) {
+        expect(match[1], p).toMatch(/^\/__triage\//);
+      }
       expect(text, p).not.toMatch(/XMLHttpRequest/);
     }
   });

@@ -7,6 +7,8 @@ import { AccessDeniedError, PdfMemoryCache, supabaseSource, type CorpusSource } 
 import { readDesignMode, saveDesignMode, type DesignMode } from './lib/design';
 import { Login } from './components/Login';
 import { QuestionBrowser } from './components/QuestionBrowser';
+import { AdminPanel } from './components/AdminPanel';
+import { ChangePassword } from './components/ChangePassword';
 
 type CatalogState =
   | { status: 'idle' }
@@ -107,14 +109,22 @@ export function App({ config, localSourceFactory }: {
   switch (catalogState.status) {
     case 'ready':
       return (
-        <QuestionBrowser
-          catalog={catalogState.catalog}
-          loadPdf={loadPdf}
-          account={account}
-          onSignOut={signOut}
-          designMode={designMode}
-          onDesignModeChange={setDesignMode}
-        />
+        <>
+          <QuestionBrowser
+            catalog={catalogState.catalog}
+            loadPdf={loadPdf}
+            account={account}
+            onSignOut={signOut}
+            designMode={designMode}
+            onDesignModeChange={setDesignMode}
+          />
+          {client && !config.localCorpus && (
+            <div className="layout">
+              <AdminPanel client={client} />
+              <ChangePassword client={client} />
+            </div>
+          )}
+        </>
       );
     case 'denied':
       return (

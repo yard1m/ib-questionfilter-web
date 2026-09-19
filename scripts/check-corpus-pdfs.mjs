@@ -7,7 +7,7 @@ import { PDFDocument } from 'pdf-lib';
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const REPO_ROOT = resolve(WEB_ROOT, '..');
 const DEFAULT_MANIFEST = resolve(REPO_ROOT, '.web-corpus/upload-manifest.json');
-const EXPECTED_OBJECTS = 687;
+const EXPECTED_OBJECTS = 717;
 
 function withinRoot(path, root) {
   const rel = relative(root, path);

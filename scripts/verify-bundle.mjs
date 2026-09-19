@@ -7,7 +7,7 @@ const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 const BANNED_EXTENSIONS = new Set(['.pdf', '.docx', '.epub', '.mobi', '.zip', '.7z', '.rar']);
 const BANNED_PATH = /(^|[\\/])(?:\.env(?:\.|$)|id_rsa|credentials\.json$|[^/]+\.(?:pem|p12)$)/i;
 const DATA_ARTIFACT_PATH = /(?:^|\/)(?:catalog|manifest|data)(?:[-_.][a-z0-9]+)*\.(?:json|js|mjs|bin|txt)$/i;
-const PRIVATE_ROUTE = /(?:__local-corpus|local-corpus|VITE_LOCAL_CORPUS|upload-manifest\.json|\.web-corpus)/i;
+const PRIVATE_ROUTE = /(?:__local-corpus|__triage|TriagePage|local-corpus|VITE_LOCAL_CORPUS|upload-manifest\.json|\.web-corpus)/i;
 const CORPUS_PATHS = /(?:markschemes[\\/]|references[\\/]books|papers[\\/](?:chemistry|physics|mathematics)(?:[\\/ ]))/i;
 // Real IB session/subject/paper code format printed on genuine papers.
 const PAPER_CODE = /[MN]\d{2}\/\d\/[A-Z]{4,5}\/[A-Z0-9]{2,4}\/ENG\//;

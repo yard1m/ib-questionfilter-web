@@ -16,6 +16,20 @@ function fixture(entries) {
 }
 
 describe('published bundle verifier', () => {
+  it('rejects dev-only triage routes and components', () => {
+    const root = fixture([
+      ['assets/triage.js', `fetch('/__triage/dossier'); const page = 'TriagePage';`],
+    ]);
+    try {
+      const result = inspectBundle(root);
+      expect(result.failures).toEqual(expect.arrayContaining([
+        'assets/triage.js: contains a local-corpus route or manifest marker',
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects local-corpus routes, secret/service-role material, data artifacts and PDFs', () => {
     const serviceRolePayload = Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url');
     const secretKey = ['sb', '_secret_12345678'].join('');

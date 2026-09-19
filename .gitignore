@@ -4,3 +4,5 @@ dist
 scripts/*.png
 tsconfig.tsbuildinfo
 public/pdfjs
+# Keep the local server prototype out of future public-root copies.
+server/

@@ -26,6 +26,19 @@ async function start() {
   const localSourceFactory = import.meta.env.DEV && result.config.localCorpus
     ? (await import('./lib/localSource')).localSource
     : undefined;
+  // The triage page is a dev-only local tool: it is dynamically imported only
+  // in development local-corpus mode (?triage=1), so production builds never
+  // contain it. The bundle verifier enforces its absence from dist/.
+  if (import.meta.env.DEV && result.config.localCorpus
+    && new URLSearchParams(window.location.search).get('triage') === '1') {
+    const { TriagePage } = await import('./triage/TriagePage');
+    root.render(
+      <StrictMode>
+        <TriagePage />
+      </StrictMode>,
+    );
+    return;
+  }
   root.render(
     <StrictMode>
       <App config={result.config} localSourceFactory={localSourceFactory} />

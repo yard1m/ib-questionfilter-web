@@ -1,0 +1,360 @@
+{
+ "chemistry": [
+  {
+   "code": "C1",
+   "topic": "The particulate nature of matter"
+  },
+  {
+   "code": "C2",
+   "topic": "The nuclear atom"
+  },
+  {
+   "code": "C3",
+   "topic": "Electron configurations"
+  },
+  {
+   "code": "C4",
+   "topic": "Counting particles by mass: The mole"
+  },
+  {
+   "code": "C5",
+   "topic": "Ideal gases"
+  },
+  {
+   "code": "C6",
+   "topic": "The ionic model"
+  },
+  {
+   "code": "C7",
+   "topic": "The covalent model"
+  },
+  {
+   "code": "C8",
+   "topic": "The metallic model"
+  },
+  {
+   "code": "C9",
+   "topic": "From models to materials"
+  },
+  {
+   "code": "C10",
+   "topic": "The periodic table"
+  },
+  {
+   "code": "C11",
+   "topic": "Classification of organic compounds"
+  },
+  {
+   "code": "C12",
+   "topic": "Measuring enthalpy changes"
+  },
+  {
+   "code": "C13",
+   "topic": "Energy cycles in reactions"
+  },
+  {
+   "code": "C14",
+   "topic": "Energy from fuels"
+  },
+  {
+   "code": "C15",
+   "topic": "Entropy and spontaneity"
+  },
+  {
+   "code": "C16",
+   "topic": "How much? The amount of chemical change"
+  },
+  {
+   "code": "C17",
+   "topic": "How fast? The rate of chemical change"
+  },
+  {
+   "code": "C18",
+   "topic": "How far? The extent of chemical change"
+  },
+  {
+   "code": "C19",
+   "topic": "Proton transfer reactions"
+  },
+  {
+   "code": "C20",
+   "topic": "Electron transfer reactions"
+  },
+  {
+   "code": "C21",
+   "topic": "Electron sharing reactions"
+  },
+  {
+   "code": "C22",
+   "topic": "Electron-pair sharing reactions"
+  }
+ ],
+ "physics": [
+  {
+   "code": "P1",
+   "topic": "Kinematics"
+  },
+  {
+   "code": "P2",
+   "topic": "Forces and Newton's Laws"
+  },
+  {
+   "code": "P3",
+   "topic": "Work Energy and Power"
+  },
+  {
+   "code": "P4",
+   "topic": "Linear Momentum"
+  },
+  {
+   "code": "P5",
+   "topic": "Rigid Body Mechanics"
+  },
+  {
+   "code": "P6",
+   "topic": "Relativity"
+  },
+  {
+   "code": "P7",
+   "topic": "Thermal Energy Transfer"
+  },
+  {
+   "code": "P8",
+   "topic": "The Greenhouse Effect"
+  },
+  {
+   "code": "P9",
+   "topic": "The Gas Laws"
+  },
+  {
+   "code": "P10",
+   "topic": "Thermodynamics"
+  },
+  {
+   "code": "P11",
+   "topic": "Current and Circuits"
+  },
+  {
+   "code": "P12",
+   "topic": "Simple Harmonic Motion"
+  },
+  {
+   "code": "P13",
+   "topic": "The Wave Model"
+  },
+  {
+   "code": "P14",
+   "topic": "Wave Phenomenon"
+  },
+  {
+   "code": "P15",
+   "topic": "Standing Waves and Resonance"
+  },
+  {
+   "code": "P16",
+   "topic": "The Doppler Effect"
+  },
+  {
+   "code": "P17",
+   "topic": "Gravitation"
+  },
+  {
+   "code": "P18",
+   "topic": "Electric and Magnetic Fields"
+  },
+  {
+   "code": "P19",
+   "topic": "Motion in Electric and Magnetic Fields"
+  },
+  {
+   "code": "P20",
+   "topic": "Electromagnetic Induction"
+  },
+  {
+   "code": "P21",
+   "topic": "Atomic Physics"
+  },
+  {
+   "code": "P22",
+   "topic": "Quantum Physics"
+  },
+  {
+   "code": "P23",
+   "topic": "Nuclear Physics"
+  },
+  {
+   "code": "P24",
+   "topic": "Nuclear Fission"
+  },
+  {
+   "code": "P25",
+   "topic": "Nuclear Fusion and Stars"
+  }
+ ],
+ "mathematics": [
+  {
+   "code": "MA1",
+   "topic": "Further Trigonometry"
+  },
+  {
+   "code": "MA10",
+   "topic": "Proof by Mathematical Induction"
+  },
+  {
+   "code": "MA11",
+   "topic": "Linear Algebra"
+  },
+  {
+   "code": "MA12",
+   "topic": "Vectors"
+  },
+  {
+   "code": "MA13",
+   "topic": "Vector Applications"
+  },
+  {
+   "code": "MA14",
+   "topic": "Complex Numbers"
+  },
+  {
+   "code": "MA15",
+   "topic": "Limits"
+  },
+  {
+   "code": "MA16",
+   "topic": "Introduction to Differential Calculus"
+  },
+  {
+   "code": "MA17",
+   "topic": "Rules of Differentiation"
+  },
+  {
+   "code": "MA18",
+   "topic": "Properties of Curves"
+  },
+  {
+   "code": "MA19",
+   "topic": "Applications of Differentiation"
+  },
+  {
+   "code": "MA2",
+   "topic": "Exponential Functions"
+  },
+  {
+   "code": "MA20",
+   "topic": "Introduction to Integration"
+  },
+  {
+   "code": "MA21",
+   "topic": "Techniques for Integration"
+  },
+  {
+   "code": "MA22",
+   "topic": "Definite Integrals"
+  },
+  {
+   "code": "MA23",
+   "topic": "Kinematics"
+  },
+  {
+   "code": "MA24",
+   "topic": "Maclaurin Series"
+  },
+  {
+   "code": "MA25",
+   "topic": "Differential Equations"
+  },
+  {
+   "code": "MA26",
+   "topic": "Bivariate Statistics"
+  },
+  {
+   "code": "MA27",
+   "topic": "Discrete Random Variables"
+  },
+  {
+   "code": "MA28",
+   "topic": "Continuous Random Variables"
+  },
+  {
+   "code": "MA3",
+   "topic": "Logarithms"
+  },
+  {
+   "code": "MA4",
+   "topic": "Introduction to Complex Numbers"
+  },
+  {
+   "code": "MA5",
+   "topic": "Real Polynomials"
+  },
+  {
+   "code": "MA6",
+   "topic": "Further Functions"
+  },
+  {
+   "code": "MA7",
+   "topic": "Counting"
+  },
+  {
+   "code": "MA8",
+   "topic": "The Binomial Theorem"
+  },
+  {
+   "code": "MA9",
+   "topic": "Reasoning and Proof"
+  },
+  {
+   "code": "MC1",
+   "topic": "Straight Lines"
+  },
+  {
+   "code": "MC10",
+   "topic": "Points in Space"
+  },
+  {
+   "code": "MC11",
+   "topic": "Probability"
+  },
+  {
+   "code": "MC12",
+   "topic": "Sampling and Data"
+  },
+  {
+   "code": "MC13",
+   "topic": "Statistics"
+  },
+  {
+   "code": "MC14",
+   "topic": "Quadratic Functions"
+  },
+  {
+   "code": "MC15",
+   "topic": "Functions"
+  },
+  {
+   "code": "MC16",
+   "topic": "Transformations of Functions"
+  },
+  {
+   "code": "MC17",
+   "topic": "Trigonometric Functions"
+  },
+  {
+   "code": "MC5",
+   "topic": "Sequences and Series"
+  },
+  {
+   "code": "MC7",
+   "topic": "Right Angled Triangle Trigonometry"
+  },
+  {
+   "code": "MC8",
+   "topic": "The Unit Circle and Radian Measure"
+  },
+  {
+   "code": "MC9",
+   "topic": "Non-Right Angled Triangle Trigonometry"
+  }
+ ]
+}
