@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import {
@@ -32,14 +32,17 @@ function download(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange }: {
+export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
   account: string;
   onSignOut: () => void;
   designMode: DesignMode;
   onDesignModeChange: (mode: DesignMode) => void;
+  /** Password change, and member management for admins; opened from the Account button. */
+  accountTools?: ReactNode;
 }) {
+  const [accountOpen, setAccountOpen] = useState(false);
   const [subjectId, setSubjectId] = useState(catalog.subjects[0]?.id ?? '');
   const subject = catalog.subjects.find((s) => s.id === subjectId) ?? catalog.subjects[0];
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(subject));
@@ -126,6 +129,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           <div className="account">
             <span className="muted small account-name">{account}</span>
             <DesignToggle mode={designMode} onChange={onDesignModeChange} />
+            {accountTools && (
+              <button type="button" className="btn secondary" aria-expanded={accountOpen} onClick={() => setAccountOpen((open) => !open)}>
+                Account
+              </button>
+            )}
             <button type="button" className="btn secondary" onClick={onSignOut}>Sign out</button>
           </div>
         </div>
@@ -150,6 +158,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           ))}
         </nav>
       </header>
+      {accountTools && accountOpen && <section className="layout account-tools" aria-label="Account">{accountTools}</section>}
 
       <div className="layout">
         <aside className={`panel filters${filtersOpen ? ' open' : ''}`} aria-label="Filters">

@@ -117,13 +117,13 @@ export function App({ config, localSourceFactory }: {
             onSignOut={signOut}
             designMode={designMode}
             onDesignModeChange={setDesignMode}
+            accountTools={client && !config.localCorpus ? (
+              <>
+                <AdminPanel client={client} />
+                <ChangePassword client={client} />
+              </>
+            ) : undefined}
           />
-          {client && !config.localCorpus && (
-            <div className="layout">
-              <AdminPanel client={client} />
-              <ChangePassword client={client} />
-            </div>
-          )}
         </>
       );
     case 'denied':
