@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Catalog } from '../lib/catalog';
 import {
-  callMembers, clearOneTimeSlot, daysSince, describeLastSeen, isAdminVisible, memberStatus, setOneTimeSlot,
+  callMembers, clearOneTimeSlot, daysSince, extendedExpiry, describeLastSeen, isAdminVisible, memberStatus, setOneTimeSlot,
   type AuditEntry, type MemberRow, type OneTimeSlot,
 } from '../lib/admin';
 
@@ -19,7 +19,10 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [username, setUsername] = useState('');
   const [note, setNote] = useState('');
-  const [expiresOn, setExpiresOn] = useState('');
+  // Access length when adding: 'unlimited', a preset number of days, or 'custom'.
+  const [accessChoice, setAccessChoice] = useState('unlimited');
+  const [customDays, setCustomDays] = useState('');
+  const [restoredNote, setRestoredNote] = useState(false);
   const [slot, setSlot] = useState<OneTimeSlot>(clearOneTimeSlot());
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,15 +58,24 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
     setBusy(true);
     setMessage(null);
     setSlot(clearOneTimeSlot());
+    const days = accessChoice === 'custom' ? Number(customDays) : Number(accessChoice);
+    if (accessChoice !== 'unlimited' && !(Number.isInteger(days) && days > 0 && days <= 3650)) {
+      setBusy(false);
+      setMessage('Enter a whole number of days between 1 and 3650.');
+      return;
+    }
     const result = await callMembers(client, 'add', {
-      username, note: note || undefined, expires_on: expiresOn || undefined,
+      username, note: note || undefined,
+      expires_on: accessChoice === 'unlimited' ? undefined : extendedExpiry(null, days),
     });
     setBusy(false);
     if (result.ok) {
       setSlot(setOneTimeSlot(result.data.username ?? username.trim().toLowerCase(), result.data.password ?? null));
+      setRestoredNote(result.data.restored === true);
       setUsername('');
       setNote('');
-      setExpiresOn('');
+      setAccessChoice('unlimited');
+      setCustomDays('');
       await refresh();
     } else {
       setMessage(result.error);
@@ -80,11 +92,16 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
     await refresh();
   }
 
-  function changeExpiry(member: MemberRow) {
-    const current = member.expires_at ? member.expires_at.slice(0, 10) : '';
-    const answer = window.prompt(`Access end date for ${member.username} (YYYY-MM-DD). Leave empty for no end date.`, current);
+  function addDays(member: MemberRow) {
+    const answer = window.prompt(`Add how many days of access for ${member.username}?`, '30');
     if (answer === null) return;
-    void run('set_expiry', { user_id: member.user_id, expires_on: answer.trim() || null });
+    const days = Number(answer.trim());
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      setMessage('Enter a whole number of days between 1 and 3650.');
+      return;
+    }
+    const until = extendedExpiry(memberStatus(member) === 'expired' ? null : member.expires_at, days);
+    void run('set_expiry', { user_id: member.user_id, expires_on: until });
   }
 
   const corpus = useMemo(() => {
@@ -120,15 +137,30 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
           <input name="friend-note" autoComplete="off" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
         </label>
         <label className="field">
-          <span>Access ends (optional)</span>
-          <input name="friend-expires" type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+          <span>Access</span>
+          <select name="friend-access" value={accessChoice} onChange={(e) => setAccessChoice(e.target.value)}>
+            <option value="unlimited">Unlimited</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="custom">Custom number of days…</option>
+          </select>
         </label>
+        {accessChoice === 'custom' && (
+          <label className="field">
+            <span>Days of access</span>
+            <input name="friend-days" type="number" min={1} max={3650} step={1} value={customDays}
+              onChange={(e) => setCustomDays(e.target.value)} required />
+          </label>
+        )}
         <button className="btn" type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add friend'}</button>
       </form>
 
       {slot.password && (
         <div className="status ok" role="status">
           <p>Password for <strong>{slot.username}</strong> (shown once — copy it now):</p>
+          {restoredNote && <p className="muted small">This username was removed before, so its old account was restored with this new password.</p>}
           <p><code>{slot.password}</code></p>
           <button type="button" className="btn secondary" onClick={() => { void navigator.clipboard?.writeText(slot.password ?? ''); }}>
             Copy password
@@ -160,7 +192,11 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
                   </td>
                   <td>
                     {state}
-                    {member.expires_at && state !== 'expired' && <div className="muted small">ends {member.expires_at.slice(0, 10)}</div>}
+                    <div className="muted small">
+                      {member.expires_at
+                        ? (state === 'expired' ? `ended ${member.expires_at.slice(0, 10)}` : `until ${member.expires_at.slice(0, 10)} (${Math.max(0, -(daysSince(member.expires_at) ?? 0))} days left)`)
+                        : 'unlimited'}
+                    </div>
                     {member.possible_sharing && <div className="error small">possible sharing</div>}
                   </td>
                   <td className={idle === null || idle > 30 ? 'warn' : undefined}>
@@ -184,7 +220,13 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
                             Suspend
                           </button>
                         )}
-                        <button type="button" className="btn secondary" onClick={() => changeExpiry(member)}>End date</button>
+                        <button type="button" className="btn secondary" onClick={() => addDays(member)}>Add days</button>
+                        {member.expires_at && (
+                          <button type="button" className="btn secondary"
+                            onClick={() => { void run('set_expiry', { user_id: member.user_id, expires_on: null }); }}>
+                            Make unlimited
+                          </button>
+                        )}
                         <button type="button" className="btn secondary"
                           onClick={() => { void run('set_admin', { user_id: member.user_id, make: !member.is_admin },
                             member.is_admin ? `Remove admin from ${member.username}?` : `Make ${member.username} an admin? They can manage every account.`); }}>

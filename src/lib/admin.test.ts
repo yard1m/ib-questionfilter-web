@@ -82,3 +82,26 @@ describe('member display helpers', () => {
     expect(memberStatus({ ...base, expires_at: '2026-12-31T23:59:59Z' }, now)).toBe('active');
   });
 });
+
+describe('extending access', () => {
+  const now = new Date('2026-09-19T12:00:00Z');
+  it('adds days from today when there is no end date or it has passed', async () => {
+    const { extendedExpiry } = await import('./admin');
+    expect(extendedExpiry(null, 30, now)).toBe('2026-10-19');
+    expect(extendedExpiry('2026-09-01T23:59:59Z', 7, now)).toBe('2026-09-26');
+  });
+  it('adds days on top of a future end date', async () => {
+    const { extendedExpiry } = await import('./admin');
+    expect(extendedExpiry('2026-12-31T23:59:59Z', 10, now)).toBe('2027-01-10');
+  });
+});
+
+describe('function error reasons', () => {
+  it('shows the reason the function returned instead of the generic wording', async () => {
+    const { callMembers } = await import('./admin');
+    const response = new Response(JSON.stringify({ error: 'yasemin already has an account.' }), { status: 400 });
+    const client = { functions: { invoke: async () => ({ data: null, error: { message: 'Edge Function returned a non-2xx status code', context: response } }) } };
+    const result = await callMembers(client as never, 'add', { username: 'yasemin' });
+    expect(result).toEqual({ ok: false, status: 400, error: 'yasemin already has an account.' });
+  });
+});

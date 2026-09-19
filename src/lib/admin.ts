@@ -70,6 +70,7 @@ export interface MembersSuccess {
     /** Present exactly once on `add` and `reset`; the UI shows it once. */
     password?: string;
     removed?: boolean;
+    restored?: boolean;
     entries?: AuditEntry[];
   };
 }
@@ -118,13 +119,29 @@ export async function callMembers(
 ): Promise<MembersResult> {
   const { data, error } = await client.functions.invoke('members', { body: { action, ...body } });
   if (error) {
-    const status = typeof (error as { status?: unknown }).status === 'number'
-      ? (error as { status: number }).status
-      : 500;
-    const message = typeof (error as { message?: unknown }).message === 'string'
-      ? (error as { message: string }).message
-      : null;
-    return { ok: false, status, error: membersErrorMessage(status, message) };
+    // supabase-js reports every non-2xx reply as "Edge Function returned a non-2xx status code";
+    // the function's own reason is in the response body, so read it from there.
+    const context = (error as { context?: unknown }).context;
+    let status = typeof (error as { status?: unknown }).status === 'number' ? (error as { status: number }).status : 500;
+    let reason: string | null = null;
+    if (context instanceof Response) {
+      status = context.status;
+      try {
+        const payload = await context.clone().json();
+        if (payload && typeof payload.error === 'string') reason = payload.error;
+      } catch {
+        // not JSON; fall back to the status wording
+      }
+    }
+    return { ok: false, status, error: reason ?? membersErrorMessage(status, null) };
   }
   return { ok: true, status: 200, data: (data ?? {}) as MembersSuccess['data'] };
+}
+
+/** The date access should end after adding `days` to the current end (or to today if none or past). */
+export function extendedExpiry(currentIso: string | null | undefined, days: number, now: Date = new Date()): string {
+  const current = currentIso ? new Date(currentIso) : null;
+  const base = current && current.getTime() > now.getTime() ? current : now;
+  const next = new Date(base.getTime() + days * 86_400_000);
+  return next.toISOString().slice(0, 10);
 }
