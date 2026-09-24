@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import {
@@ -52,7 +52,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(subject));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withMarkscheme, setWithMarkscheme] = useState(true);
-  const [progress, setProgress] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ stage: string; done: number; total: number } | null>(null);
+  const cancelRef = useRef(false);
   const [preview, setPreview] = useState<Question | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -103,20 +104,23 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         ...(withMarkscheme && q.answerSlices && q.document.markschemeKey ? [q.document.markschemeKey] : []),
       ]))];
       let done = 0;
-      setProgress(`Downloading papers 0/${keys.length}…`);
+      cancelRef.current = false;
+      setProgress({ stage: 'Downloading papers', done: 0, total: keys.length });
       const queue = [...keys];
       const worker = async () => {
         for (let key = queue.shift(); key; key = queue.shift()) {
+          if (cancelRef.current) throw new Error('cancelled');
           await Promise.race([
             loadPdf(key),
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 90_000)),
           ]);
           done += 1;
-          setProgress(`Downloading papers ${done}/${keys.length}…`);
+          setProgress({ stage: 'Downloading papers', done, total: keys.length });
         }
       };
       await Promise.all(Array.from({ length: Math.min(6, keys.length) }, worker));
-      setProgress('Building PDF…');
+      if (cancelRef.current) throw new Error('cancelled');
+      setProgress({ stage: 'Building PDFs', done: keys.length, total: keys.length });
       const base = `${subject.name} Filtered Questions`;
       const questions = await exportQuestions(chosen, loadPdf, base, stamp);
       onActivity?.('export', subject.id, chosen.length);
@@ -130,8 +134,12 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
       }
       setMessage({ kind: 'ok', text });
-    } catch {
-      setMessage({ kind: 'error', text: 'The export failed. Try again, or select fewer questions.' });
+    } catch (error) {
+      setMessage(error instanceof Error && error.message === 'cancelled'
+        ? { kind: 'ok', text: 'Export cancelled.' }
+        : { kind: 'error', text: error instanceof Error && error.message === 'timeout'
+          ? 'A paper took too long to download. Check your connection and try again.'
+          : 'The export failed. Try again, or select fewer questions.' });
     } finally {
       setProgress(null);
       setBusy(false);
@@ -251,9 +259,22 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
               <span>Generate selected-question markscheme PDF</span>
             </label>
             <button type="button" className="btn" disabled={!chosen.length || busy} onClick={exportSelection}>
-              {busy ? (progress ?? 'Exporting…') : 'Export PDF'}
+              {busy ? 'Exporting…' : 'Export PDF'}
             </button>
           </div>
+          {busy && progress && (
+            <div className="export-progress" role="status" aria-live="polite">
+              <div className="export-progress-head">
+                <span>{progress.stage}</span>
+                <span>{progress.done}/{progress.total} papers · {Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%</span>
+              </div>
+              <div className="export-progress-track">
+                <div className={`export-progress-bar${progress.stage === 'Building PDFs' ? ' building' : ''}`}
+                  style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }} />
+              </div>
+              <button type="button" className="link" onClick={() => { cancelRef.current = true; }}>Cancel</button>
+            </div>
+          )}
           {message && <div className={`status ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
 
           {visible.length === 0 ? (

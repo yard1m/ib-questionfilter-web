@@ -340,3 +340,12 @@ html[data-design="archive"] .modal-head { background: var(--card); }
 .admin .badge { margin-left: 6px; font-size: 11px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
 .audit-log { max-height: 240px; overflow-y: auto; padding-left: 18px; }
 @media (max-width: 760px) { .account-tools { grid-template-columns: 1fr; } }
+
+/* Export progress */
+.export-progress { margin-top: 12px; display: grid; gap: 6px; }
+.export-progress-head { display: flex; justify-content: space-between; font-size: 13px; }
+.export-progress-track { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.export-progress-bar { height: 100%; background: var(--accent, #c8553d); transition: width .25s ease; }
+.export-progress-bar.building { animation: export-pulse 1s ease-in-out infinite alternate; }
+@keyframes export-pulse { from { opacity: 1; } to { opacity: .45; } }
+.export-progress .link { justify-self: start; }
