@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import {
@@ -32,6 +32,11 @@ function download(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+function formatSeconds(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
 export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
@@ -54,8 +59,17 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [withMarkscheme, setWithMarkscheme] = useState(true);
   const [progress, setProgress] = useState<{ stage: string; done: number; total: number } | null>(null);
   const cancelRef = useRef(false);
+  // Timing for the progress panel: when the export and the current stage started.
+  const startedRef = useRef(0);
+  const stageStartedRef = useRef(0);
+  const [now, setNow] = useState(() => Date.now());
   const [preview, setPreview] = useState<Question | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [busy]);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const closePreview = useCallback(() => setPreview(null), []);
@@ -105,6 +119,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       ]))];
       let done = 0;
       cancelRef.current = false;
+      startedRef.current = Date.now();
+      stageStartedRef.current = Date.now();
       setProgress({ stage: 'Downloading papers', done: 0, total: keys.length });
       const queue = [...keys];
       const worker = async () => {
@@ -120,6 +136,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       };
       await Promise.all(Array.from({ length: Math.min(6, keys.length) }, worker));
       if (cancelRef.current) throw new Error('cancelled');
+      stageStartedRef.current = Date.now();
       setProgress({ stage: 'Building PDFs', done: keys.length, total: keys.length });
       const base = `${subject.name} Filtered Questions`;
       const questions = await exportQuestions(chosen, loadPdf, base, stamp);
@@ -133,7 +150,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
         text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
       }
-      setMessage({ kind: 'ok', text });
+      setMessage({ kind: 'ok', text: `${text} Took ${formatSeconds(Date.now() - startedRef.current)}.` });
     } catch (error) {
       setMessage(error instanceof Error && error.message === 'cancelled'
         ? { kind: 'ok', text: 'Export cancelled.' }
@@ -267,6 +284,16 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
               <div className="export-progress-head">
                 <span>{progress.stage}</span>
                 <span>{progress.done}/{progress.total} papers · {Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%</span>
+              </div>
+              <div className="export-progress-head muted small">
+                <span>
+                  {progress.stage === 'Building PDFs'
+                    ? `Building for ${formatSeconds(now - stageStartedRef.current)}`
+                    : progress.done > 0 && progress.done < progress.total
+                      ? `About ${formatSeconds(((now - stageStartedRef.current) / progress.done) * (progress.total - progress.done))} left`
+                      : 'Estimating time…'}
+                </span>
+                <span>Elapsed {formatSeconds(now - startedRef.current)}</span>
               </div>
               <div className="export-progress-track">
                 <div className={`export-progress-bar${progress.stage === 'Building PDFs' ? ' building' : ''}`}
