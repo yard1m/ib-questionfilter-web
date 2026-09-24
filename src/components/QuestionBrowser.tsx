@@ -52,6 +52,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(subject));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withMarkscheme, setWithMarkscheme] = useState(true);
+  const [progress, setProgress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Question | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -95,6 +96,27 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     setMessage(null);
     try {
       const { exportMarkscheme, exportQuestions } = await import('../lib/exportPdf');
+      // Fetch every paper the export needs up front, several at a time; the builders then read
+      // them from the in-memory cache. One at a time took minutes for a large selection.
+      const keys = [...new Set(chosen.flatMap((q) => [
+        q.document.paperKey,
+        ...(withMarkscheme && q.answerSlices && q.document.markschemeKey ? [q.document.markschemeKey] : []),
+      ]))];
+      let done = 0;
+      setProgress(`Downloading papers 0/${keys.length}…`);
+      const queue = [...keys];
+      const worker = async () => {
+        for (let key = queue.shift(); key; key = queue.shift()) {
+          await Promise.race([
+            loadPdf(key),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 90_000)),
+          ]);
+          done += 1;
+          setProgress(`Downloading papers ${done}/${keys.length}…`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, keys.length) }, worker));
+      setProgress('Building PDF…');
       const base = `${subject.name} Filtered Questions`;
       const questions = await exportQuestions(chosen, loadPdf, base, stamp);
       onActivity?.('export', subject.id, chosen.length);
@@ -111,6 +133,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     } catch {
       setMessage({ kind: 'error', text: 'The export failed. Try again, or select fewer questions.' });
     } finally {
+      setProgress(null);
       setBusy(false);
     }
   }
@@ -228,7 +251,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
               <span>Generate selected-question markscheme PDF</span>
             </label>
             <button type="button" className="btn" disabled={!chosen.length || busy} onClick={exportSelection}>
-              {busy ? 'Exporting…' : 'Export PDF'}
+              {busy ? (progress ?? 'Exporting…') : 'Export PDF'}
             </button>
           </div>
           {message && <div className={`status ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
