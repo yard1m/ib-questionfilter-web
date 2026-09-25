@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
 import type { Question } from './catalog';
 import { displayedRect, normaliseRotation, placement, userRect, type PageBox, type Rect } from './geometry';
+import type { HasContent } from './sliceContent';
 
 /**
  * Builds the two exports the desktop app produces, entirely in the browser:
@@ -9,7 +10,9 @@ import { displayedRect, normaliseRotation, placement, userRect, type PageBox, ty
  *    desktop app's scaling rules (Scripts/export_markschemes.py). Questions without an answer
  *    slice are listed on a closing review page instead of being dropped silently. A source page
  *    without a content stream is an invalid export source and fails closed.
- * Pages are embedded as vector content, never rasterised.
+ * Pages are embedded as vector content, never rasterised. When a `hasContent` check is given,
+ * short slices holding only white space or a running header are left out, so they do not export
+ * as empty pages; a question always keeps at least one slice.
  */
 
 const OUTPUT_PAGE_WIDTH = 842;
@@ -63,14 +66,21 @@ function pageBox(page: PDFPage): PageBox {
   return { x: media.x, y: media.y, width: media.width, height: media.height, rotation: normaliseRotation(page.getRotation().angle) };
 }
 
-export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string): Promise<ExportResult> {
+async function contentSlices<T extends Question['questionSlices'][number]>(slices: T[], key: string, hasContent?: HasContent): Promise<T[]> {
+  if (!hasContent) return slices;
+  const kept: T[] = [];
+  for (const slice of slices) if (await hasContent(key, slice)) kept.push(slice);
+  return kept.length ? kept : slices.slice(0, 1);
+}
+
+export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent): Promise<ExportResult> {
   const out = await PDFDocument.create();
   out.setTitle(title);
   out.setCreator('IB Question Filter');
   const sources = new Map<string, Promise<PDFDocument>>();
   for (const question of questions) {
     const source = await openSource(load, question.document.paperKey, sources);
-    for (const slice of question.questionSlices) {
+    for (const slice of await contentSlices(question.questionSlices, question.document.paperKey, hasContent)) {
       const page = source.getPage(slice.page);
       const box = pageBox(page);
       const shown: Rect = displayedRect(box, { ...slice, left: null, right: null });
@@ -87,7 +97,7 @@ export async function exportQuestions(questions: Question[], load: LoadPdf, titl
   return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
-export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string): Promise<ExportResult> {
+export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent): Promise<ExportResult> {
   const out = await PDFDocument.create();
   out.setTitle(title);
   out.setCreator('IB Question Filter');
@@ -106,7 +116,7 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
     }
     const source = await openSource(load, question.document.markschemeKey, sources);
     const seen = new Set<string>();
-    for (const slice of question.answerSlices) {
+    for (const slice of await contentSlices(question.answerSlices, question.document.markschemeKey, hasContent)) {
       const identity = [slice.page, slice.lower.toFixed(1), slice.upper.toFixed(1), (slice.left ?? 0).toFixed(1), (slice.right ?? 0).toFixed(1)].join(':');
       if (seen.has(identity)) continue;
       seen.add(identity);

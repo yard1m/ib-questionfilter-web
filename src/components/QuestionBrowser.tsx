@@ -139,16 +139,23 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       stageStartedRef.current = Date.now();
       setProgress({ stage: 'Building PDFs', done: keys.length, total: keys.length });
       const base = `${subject.name} Filtered Questions`;
-      const questions = await exportQuestions(chosen, loadPdf, base, stamp);
-      onActivity?.('export', subject.id, chosen.length);
-      download(questions.bytes, `${base}.pdf`);
-      let text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
-      if (withMarkscheme) {
-        const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, stamp);
-        onActivity?.('markscheme', subject.id, chosen.length);
-        download(markscheme.bytes, `${base} Markscheme.pdf`);
-        text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
-        text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
+      const [{ openForRendering }, { pdfContentCheck }] = await Promise.all([import('../lib/render'), import('../lib/sliceContent')]);
+      const content = pdfContentCheck(loadPdf, openForRendering);
+      let text: string;
+      try {
+        const questions = await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
+        onActivity?.('export', subject.id, chosen.length);
+        download(questions.bytes, `${base}.pdf`);
+        text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
+        if (withMarkscheme) {
+          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, stamp, content.hasContent);
+          onActivity?.('markscheme', subject.id, chosen.length);
+          download(markscheme.bytes, `${base} Markscheme.pdf`);
+          text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
+          text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
+        }
+      } finally {
+        await content.close();
       }
       setMessage({ kind: 'ok', text: `${text} Took ${formatSeconds(Date.now() - startedRef.current)}.` });
     } catch (error) {
