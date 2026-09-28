@@ -349,3 +349,76 @@ html[data-design="archive"] .modal-head { background: var(--card); }
 .export-progress-bar.building { animation: export-pulse 1s ease-in-out infinite alternate; }
 @keyframes export-pulse { from { opacity: 1; } to { opacity: .45; } }
 .export-progress .link { justify-self: start; }
+
+/* ---------------------------------------------------------------------------------------------
+ * UI polish (2026-09-28): two-row sticky export toolbar, readable disabled buttons, themed
+ * checkboxes, a masthead that stacks cleanly on small screens, even subject tabs, and rows that
+ * are only painted near the viewport. Remove this block to return to the previous look.
+ * ------------------------------------------------------------------------------------------- */
+.toolbar { display: grid; gap: 10px; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px 0; }
+.toolbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.toolbar .count { margin-right: auto; min-width: 0; }
+.toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.toolbar-export { padding-top: 10px; border-top: 1px solid var(--line); }
+.toolbar-options { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-right: auto; }
+.toolbar-options .check { white-space: nowrap; }
+.export-btn { min-width: 170px; padding: 10px 18px; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled { opacity: 1; background: transparent; border-color: var(--line); color: var(--muted); }
+.qlist > li { content-visibility: auto; contain-intrinsic-size: auto 88px; }
+.archive-subtitle span { white-space: nowrap; }
+
+html[data-design="archive"] .toolbar {
+  background: rgba(27, 24, 31, .97); padding: 14px 16px; backdrop-filter: blur(6px);
+  box-shadow: 0 10px 18px -14px rgba(0, 0, 0, .7);
+}
+html[data-design="archive"] .export-btn { font-size: 12px; letter-spacing: .12em; }
+html[data-design="archive"] .btn:not(:disabled):hover { filter: brightness(1.08); }
+html[data-design="archive"] .btn:focus-visible { outline-color: var(--gold); }
+html[data-design="archive"] .btn:disabled {
+  background: transparent; border-color: rgba(180, 167, 158, .28); color: rgba(180, 167, 158, .55);
+}
+html[data-design="archive"] .btn.export-btn:disabled { border-style: dashed; }
+html[data-design="archive"] .toolbar .check.inline { color: var(--ink); font-size: 12.5px; }
+html[data-design="archive"] .archive-subtitle { display: flex; flex-wrap: wrap; gap: 6px 20px; line-height: 1.4; }
+
+/* Themed checkboxes: gold outline, red fill with a cream tick when checked. */
+html[data-design="archive"] input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; width: 15px; height: 15px; margin: 2px 0 0; flex: none;
+  border: 1px solid var(--gold); background: rgba(0, 0, 0, .18); cursor: pointer; display: inline-grid; place-content: center;
+}
+html[data-design="archive"] .qcard > input[type="checkbox"] { width: 17px; height: 17px; margin-top: 0; }
+html[data-design="archive"] input[type="checkbox"]:checked {
+  border-color: var(--accent); background: var(--accent) no-repeat center / 11px
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 5.2 4.3 8.5 11 1.5' fill='none' stroke='%23fff5e7' stroke-width='2'/%3E%3C/svg%3E");
+}
+html[data-design="archive"] input[type="checkbox"]:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+html[data-design="archive"] input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  html[data-design="archive"] .masthead { flex-wrap: wrap; align-items: flex-start; }
+  html[data-design="archive"] .archive-wordmark { order: 1; flex: 1 1 0; min-width: 0; }
+  html[data-design="archive"] .archive-seal { order: 2; margin-left: auto; }
+  html[data-design="archive"] .archive-subtitle { order: 3; flex-basis: 100%; margin: 0; }
+  html[data-design="archive"] .archive-attribution { order: 4; flex-basis: 100%; margin-top: 0; }
+  html[data-design="archive"] .archive-motto { overflow-wrap: normal; }
+}
+@media (max-width: 560px) {
+  .toolbar { position: static; }
+  .toolbar-actions { flex: 1 1 100%; flex-wrap: nowrap; }
+  .toolbar-actions .btn { flex: 1 1 0; padding-left: 8px; padding-right: 8px; }
+  .toolbar-export { flex-direction: column; align-items: stretch; }
+  .export-btn { width: 100%; }
+  html[data-design="archive"] .subjects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
+  html[data-design="archive"] .subjects button { min-width: 0; padding: 11px 10px 12px; font-size: 12px; letter-spacing: .06em; }
+  html[data-design="archive"] .subject-index { font-size: 9px; }
+  html[data-design="archive"] .app-topline { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  html[data-design="archive"] .archive-kicker { flex-basis: 100%; font-size: 9px; letter-spacing: .14em; }
+  html[data-design="archive"] .account { width: auto; flex: 1; justify-content: flex-end; }
+  html[data-design="archive"] .account-name { display: none; }
+  html[data-design="archive"] .archive-wordmark { font-size: 36px; }
+  html[data-design="archive"] .archive-seal { width: 48px; height: 48px; font-size: 21px; }
+  html[data-design="archive"] .masthead { gap: 12px 14px; flex-wrap: wrap; }
+  html[data-design="archive"] .archive-motto { font-size: 10px; letter-spacing: .12em; }
+  html[data-design="archive"] .toolbar { padding: 12px; position: static; box-shadow: none; }
+}

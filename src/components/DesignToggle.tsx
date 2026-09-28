@@ -10,7 +10,7 @@ export function DesignToggle({ mode, onChange }: { mode: DesignMode; onChange: (
       aria-pressed={mode === 'archive'}
       onClick={() => onChange(nextMode)}
     >
-      <span className="design-toggle-label">{mode === 'archive' ? 'Archive style' : 'Classic style'}</span>
+      <span className="design-toggle-label">Archive style</span>
       <span className="design-toggle-state">{mode === 'archive' ? 'ON' : 'OFF'}</span>
     </button>
   );

@@ -221,7 +221,9 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           <div className="app-title">
             <div className="archive-wordmark" aria-hidden="true">LITTLE <strong>RED</strong> BANK</div>
             <h1>IB Question Filter</h1>
-            <p className="archive-subtitle" aria-hidden="true">QUESTION ARCHIVE &nbsp;·&nbsp; FILTER &nbsp;·&nbsp; COMPILE &nbsp;·&nbsp; ISSUE MMXXVI</p>
+            <p className="archive-subtitle" aria-hidden="true">
+              <span>Question archive</span><span>Filter</span><span>Compile</span><span>Issue MMXXVI</span>
+            </p>
             <div className="archive-attribution" aria-label="Site attribution">
               <div className="archive-motto">OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!</div>
               <div className="archive-credit">Built By yard1m_42</div>
@@ -287,33 +289,41 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
             <div><strong>{pagesToCompile}</strong><span>PAGES TO COMPILE</span></div>
           </section>
           <div className="toolbar">
-            <div className="count">
-              <strong>{visible.length} matching question{visible.length === 1 ? '' : 's'}</strong>
-              <span className="muted small">
-                {chosen.length} selected{chosen.length ? ` · ${answers} markscheme answer${answers === 1 ? '' : 's'}` : ''}
-              </span>
+            <div className="toolbar-row">
+              <div className="count">
+                <strong>{visible.length} matching question{visible.length === 1 ? '' : 's'}</strong>
+                <span className="muted small">
+                  {chosen.length} selected{chosen.length ? ` · ${answers} markscheme answer${answers === 1 ? '' : 's'}` : ''}
+                </span>
+              </div>
+              <div className="toolbar-actions">
+                <button type="button" className="btn secondary" disabled={!visible.length}
+                  onClick={() => setSelected(new Set(visible.map((q) => q.id)))}>Select filtered</button>
+                <button type="button" className="btn secondary" disabled={!chosen.length}
+                  onClick={() => setSelected(new Set())}>Clear selection</button>
+              </div>
             </div>
-            <button type="button" className="btn secondary" disabled={!visible.length}
-              onClick={() => setSelected(new Set(visible.map((q) => q.id)))}>Select filtered</button>
-            <button type="button" className="btn secondary" disabled={!chosen.length}
-              onClick={() => setSelected(new Set())}>Clear selection</button>
-            <label className="check inline">
-              <input type="checkbox" checked={withMarkscheme} disabled={busy} onChange={(e) => setWithMarkscheme(e.target.checked)} />
-              <span>Generate selected-question markscheme PDF</span>
-            </label>
-            <label className="check inline" title="Trimmed questions on A4 pages with labels, page numbers and a watermark. Untick for the original layout.">
-              <input type="checkbox" checked={cleanLayout} disabled={busy} onChange={(e) => chooseLayout(e.target.checked)} />
-              <span>Clean layout</span>
-            </label>
-            {isAdmin && cleanLayout && (
-              <label className="check inline" title="Admin accounts only: no watermark and no sharing stamp.">
-                <input type="checkbox" checked={adminFormat} disabled={busy} onChange={(e) => setAdminFormat(e.target.checked)} />
-                <span>Admin format (no watermark)</span>
-              </label>
-            )}
-            <button type="button" className="btn" disabled={!chosen.length || busy} onClick={exportSelection}>
-              {busy ? 'Exporting…' : 'Export PDF'}
-            </button>
+            <div className="toolbar-row toolbar-export">
+              <div className="toolbar-options">
+                <label className="check inline">
+                  <input type="checkbox" checked={withMarkscheme} disabled={busy} onChange={(e) => setWithMarkscheme(e.target.checked)} />
+                  <span>Markscheme PDF</span>
+                </label>
+                <label className="check inline" title="Trimmed questions on A4 pages with labels, page numbers and a watermark. Untick for the original layout.">
+                  <input type="checkbox" checked={cleanLayout} disabled={busy} onChange={(e) => chooseLayout(e.target.checked)} />
+                  <span>Clean layout</span>
+                </label>
+                {isAdmin && cleanLayout && (
+                  <label className="check inline" title="Admin accounts only: no watermark and no sharing stamp.">
+                    <input type="checkbox" checked={adminFormat} disabled={busy} onChange={(e) => setAdminFormat(e.target.checked)} />
+                    <span>Admin format (no watermark)</span>
+                  </label>
+                )}
+              </div>
+              <button type="button" className="btn export-btn" disabled={!chosen.length || busy} onClick={exportSelection}>
+                {busy ? 'Exporting…' : chosen.length ? `Export ${chosen.length} question${chosen.length === 1 ? '' : 's'}` : 'Export PDF'}
+              </button>
+            </div>
           </div>
           {busy && progress && (
             <div className="export-progress" role="status" aria-live="polite">

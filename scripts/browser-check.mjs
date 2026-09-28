@@ -516,10 +516,10 @@ async function main() {
     await runCheck('selected question and rotated markscheme PDFs both download', async () => {
       requireCondition(await rotatedCard.count() === 1, 'rotated question card is unavailable');
       await rotatedCard.locator('input[type="checkbox"]').first().check();
-      await setChecked(page, /^Generate selected-question markscheme PDF$/, true);
+      await setChecked(page, /^Markscheme PDF$/, true);
       const files = await collectDownloads(
         page,
-        () => page.getByRole('button', { name: 'Export PDF', exact: true }).click(),
+        () => page.getByRole('button', { name: /^Export \d+ questions?$/ }).click(),
         2,
       );
       requireCondition(files.length === 2, `expected two downloads, found ${files.length}`);
