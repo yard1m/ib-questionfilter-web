@@ -37,7 +37,7 @@ function formatSeconds(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
-export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity }: {
+export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity, isAdmin = false }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
   account: string;
@@ -48,6 +48,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   accountTools?: ReactNode;
   /** Printed at the foot of every exported page (the account name and date). */
   stamp?: string;
+  isAdmin?: boolean;
   /** Counts previews and exports for the admin panel's usage columns. */
   onActivity?: (kind: 'preview' | 'export' | 'markscheme', subject: string, items: number) => void;
 }) {
@@ -62,6 +63,9 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [cleanLayout, setCleanLayout] = useState(() => {
     try { return window.localStorage.getItem('ibqf.exportLayout') !== 'original'; } catch { return true; }
   });
+  const [adminFormat, setAdminFormat] = useState(true);
+  const unmarked = isAdmin && adminFormat;
+  const siteUrl = `${window.location.origin}${import.meta.env.BASE_URL}`;
   const chooseLayout = (clean: boolean) => {
     setCleanLayout(clean);
     try { window.localStorage.setItem('ibqf.exportLayout', clean ? 'clean' : 'original'); } catch { /* per-browser convenience only */ }
@@ -154,7 +158,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       try {
         const exportedAt = new Date();
         const questions = cleanLayout
-          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox })
+          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox, admin: unmarked, siteUrl })
           : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
         onActivity?.('export', subject.id, chosen.length);
         download(questions.bytes, `${base}.pdf`);
@@ -162,7 +166,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         if (withMarkscheme) {
           const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent);
           const markschemeBytes = cleanLayout
-            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt })
+            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl })
             : markscheme.bytes;
           onActivity?.('markscheme', subject.id, chosen.length);
           download(markschemeBytes, `${base} Markscheme.pdf`);
@@ -301,6 +305,12 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
               <input type="checkbox" checked={cleanLayout} disabled={busy} onChange={(e) => chooseLayout(e.target.checked)} />
               <span>Clean layout</span>
             </label>
+            {isAdmin && cleanLayout && (
+              <label className="check inline" title="Admin accounts only: no watermark and no sharing stamp.">
+                <input type="checkbox" checked={adminFormat} disabled={busy} onChange={(e) => setAdminFormat(e.target.checked)} />
+                <span>Admin format (no watermark)</span>
+              </label>
+            )}
             <button type="button" className="btn" disabled={!chosen.length || busy} onClick={exportSelection}>
               {busy ? 'Exporting…' : 'Export PDF'}
             </button>

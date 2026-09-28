@@ -9,6 +9,7 @@ import { Login } from './components/Login';
 import { QuestionBrowser } from './components/QuestionBrowser';
 import { AdminPanel } from './components/AdminPanel';
 import { ChangePassword } from './components/ChangePassword';
+import { callMembers } from './lib/admin';
 
 type CatalogState =
   | { status: 'idle' }
@@ -55,6 +56,15 @@ export function App({ config, localSourceFactory }: {
   const [designMode, setDesignMode] = useState<DesignMode>(() => readDesignMode());
   // One device per account: 'ok' lets the catalog load; anything else shows why it cannot.
   const [access, setAccess] = useState<AccessState>(config.localCorpus ? 'ok' : 'checking');
+  // Admin status decides only the export format offered (no watermark). The members function
+  // answers 200 to admins alone, so this reuses the same server-side check as the admin panel.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!client || !session) { setIsAdmin(false); return; }
+    let live = true;
+    void callMembers(client, 'list').then((r) => { if (live) setIsAdmin(r.ok); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [client, session]);
   const justSignedIn = useRef(false);
 
   useEffect(() => {
@@ -198,6 +208,7 @@ export function App({ config, localSourceFactory }: {
             onDesignModeChange={setDesignMode}
             stamp={config.localCorpus ? undefined : `Exported for ${account} · ${new Date().toISOString().slice(0, 10)} · personal account, do not share`}
             onActivity={logActivity}
+            isAdmin={isAdmin}
             accountTools={client && !config.localCorpus ? (
               <>
                 <AdminPanel client={client} catalog={catalogState.catalog} />

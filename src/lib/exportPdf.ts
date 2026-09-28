@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
 import type { Question, Slice } from './catalog';
 import { displayedRect, normaliseRotation, placement, userRect, type PageBox, type Rect } from './geometry';
 import type { ContentBox, HasContent } from './sliceContent';
@@ -196,6 +196,10 @@ const INK = rgb(0.086, 0.098, 0.114);
 
 export interface CleanOptions {
   subject: string;
+  /** Admin format: no watermark and no sharing stamp (labels and page numbers stay). */
+  admin?: boolean;
+  /** Printed as a small clickable link in the footer of watermarked exports. */
+  siteUrl?: string;
   stamp?: string;
   exportedAt?: Date;
   contentBox?: ContentBox;
@@ -256,7 +260,7 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
       first = false;
     }
   }
-  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, font, bold });
+  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, admin: options.admin, siteUrl: options.siteUrl, font, bold });
   return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
@@ -265,11 +269,11 @@ export async function decorateExport(bytes: Uint8Array, title: string, options: 
   const out = await PDFDocument.load(bytes);
   const font = await out.embedFont(StandardFonts.Helvetica);
   const bold = await out.embedFont(StandardFonts.HelveticaBold);
-  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, font, bold });
+  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, admin: options.admin, siteUrl: options.siteUrl, font, bold });
   return out.save();
 }
 
-async function decoratePages(out: PDFDocument, o: { title: string; subject: string; stamp?: string; exportedAt?: Date; font: Awaited<ReturnType<PDFDocument['embedFont']>>; bold: Awaited<ReturnType<PDFDocument['embedFont']>> }) {
+async function decoratePages(out: PDFDocument, o: { title: string; subject: string; stamp?: string; exportedAt?: Date; admin?: boolean; siteUrl?: string; font: Awaited<ReturnType<PDFDocument['embedFont']>>; bold: Awaited<ReturnType<PDFDocument['embedFont']>> }) {
   const date = (o.exportedAt ?? new Date()).toISOString().slice(0, 10);
   out.setTitle(o.title);
   out.setAuthor(SITE_NAME);
@@ -279,12 +283,13 @@ async function decoratePages(out: PDFDocument, o: { title: string; subject: stri
   out.setKeywords([SITE_NAME, o.subject, 'IB', 'exported']);
   const pages = out.getPages();
   const grey = rgb(0.42, 0.42, 0.4);
-  const stamp = (o.stamp ?? '').trim();
+  const stamp = o.admin ? '' : (o.stamp ?? '').trim();
   pages.forEach((page, i) => {
     const { width, height } = page.getSize();
     // Diagonal wordmark watermark in the site's colours: LITTLE and BANK in gold, RED in red.
     const parts: [string, ReturnType<typeof rgb>][] = [['LITTLE ', GOLD], ['RED ', RED], ['BANK', GOLD]];
     const wmSize = Math.min(width, height) / 8.5;
+    if (!o.admin) {
     const total = parts.reduce((n, [t]) => n + o.bold.widthOfTextAtSize(t, wmSize), 0);
     const angle = Math.atan2(height, width) * 0.85;
     const cos = Math.cos(angle), sin = Math.sin(angle);
@@ -295,22 +300,43 @@ async function decoratePages(out: PDFDocument, o: { title: string; subject: stri
       const adv = o.bold.widthOfTextAtSize(t, wmSize);
       wx += cos * adv; wy += sin * adv;
     }
+    }
     // Header: wordmark left, subject and title right, gold rule.
     let hx = 24;
     for (const [t, color] of [['LITTLE ', INK], ['RED ', RED], ['BANK', INK]] as [string, ReturnType<typeof rgb>][]) {
       page.drawText(t, { x: hx, y: height - 22, size: 9.5, font: o.bold, color });
       hx += o.bold.widthOfTextAtSize(t, 9.5);
     }
-    const right = clip(`${o.subject} · ${o.title}`, o.font, 8, width / 2);
+    const right = clip(`${o.subject} · ${o.title}`, o.font, 8, width / 3);
     page.drawText(right, { x: width - 24 - o.font.widthOfTextAtSize(right, 8), y: height - 22, size: 8, font: o.font, color: grey });
-    page.drawLine({ start: { x: 24, y: height - 28 }, end: { x: width - 24, y: height - 28 }, thickness: 0.8, color: GOLD });
-    // Footer: gold rule, stamp left, motto centre, page number right.
-    page.drawLine({ start: { x: 24, y: 26 }, end: { x: width - 24, y: 26 }, thickness: 0.8, color: GOLD });
-    const left = clip(stamp || `Exported from ${SITE_NAME} · ${date}`, o.font, 7, width / 2 - 16);
-    page.drawText(left, { x: 24, y: 14, size: 7, font: o.font, color: grey });
     const motto = o.font.widthOfTextAtSize(MOTTO, 6.2);
-    if (motto < width / 3) page.drawText(MOTTO, { x: width / 2 + 8 + (width / 2 - 110 - motto) / 2, y: 14, size: 6.2, font: o.font, color: GOLD });
+    if (motto < width / 3 - 20) page.drawText(MOTTO, { x: width / 2 - motto / 2, y: height - 21.5, size: 6.2, font: o.font, color: GOLD });
+    page.drawLine({ start: { x: 24, y: height - 28 }, end: { x: width - 24, y: height - 28 }, thickness: 0.8, color: GOLD });
+    // Footer: gold rule, stamp left, site link centre (not in admin format), page number right.
+    page.drawLine({ start: { x: 24, y: 26 }, end: { x: width - 24, y: 26 }, thickness: 0.8, color: GOLD });
+    const left = clip(stamp || (o.admin ? `${SITE_NAME} · ${date}` : `Exported from ${SITE_NAME} · ${date}`), o.font, 7, width / 2 - 90);
+    page.drawText(left, { x: 24, y: 14, size: 7, font: o.font, color: grey });
+    if (!o.admin && o.siteUrl) {
+      const label = o.siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const lw = o.font.widthOfTextAtSize(label, 7);
+      const lx = Math.max(width / 2 - lw / 2, 24 + o.font.widthOfTextAtSize(left, 7) + 12);
+      page.drawText(label, { x: lx, y: 14, size: 7, font: o.font, color: RED });
+      page.drawLine({ start: { x: lx, y: 12.6 }, end: { x: lx + lw, y: 12.6 }, thickness: 0.4, color: RED });
+      addLink(out, page, [lx - 1, 10, lx + lw + 1, 22], o.siteUrl);
+    }
     const num = `Page ${i + 1} of ${pages.length}`;
     page.drawText(num, { x: width - 24 - o.font.widthOfTextAtSize(num, 7.5), y: 14, size: 7.5, font: o.bold, color: RED });
   });
+}
+
+/** Adds a clickable URI link annotation over a rectangle [x0, y0, x1, y1] (no visible border). */
+function addLink(doc: PDFDocument, page: PDFPage, rect: [number, number, number, number], url: string) {
+  const annot = doc.context.obj({
+    Type: 'Annot', Subtype: 'Link', Rect: rect, Border: [0, 0, 0],
+    A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
+  });
+  const ref = doc.context.register(annot);
+  const existing = page.node.lookup(PDFName.of('Annots'));
+  if (existing && 'push' in existing) (existing as unknown as { push(v: unknown): void }).push(ref);
+  else page.node.set(PDFName.of('Annots'), doc.context.obj([ref]));
 }
