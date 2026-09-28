@@ -57,6 +57,15 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(subject));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withMarkscheme, setWithMarkscheme] = useState(true);
+  // Clean layout (trimmed crops on A4 with header, footer and watermark) is the default; the
+  // original layout stays available. The choice is remembered per browser.
+  const [cleanLayout, setCleanLayout] = useState(() => {
+    try { return window.localStorage.getItem('ibqf.exportLayout') !== 'original'; } catch { return true; }
+  });
+  const chooseLayout = (clean: boolean) => {
+    setCleanLayout(clean);
+    try { window.localStorage.setItem('ibqf.exportLayout', clean ? 'clean' : 'original'); } catch { /* per-browser convenience only */ }
+  };
   const [progress, setProgress] = useState<{ stage: string; done: number; total: number } | null>(null);
   const cancelRef = useRef(false);
   // Timing for the progress panel: when the export and the current stage started.
@@ -110,7 +119,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     setBusy(true);
     setMessage(null);
     try {
-      const { exportMarkscheme, exportQuestions } = await import('../lib/exportPdf');
+      const { exportMarkscheme, exportQuestions, exportQuestionsClean, decorateExport } = await import('../lib/exportPdf');
       // Fetch every paper the export needs up front, several at a time; the builders then read
       // them from the in-memory cache. One at a time took minutes for a large selection.
       const keys = [...new Set(chosen.flatMap((q) => [
@@ -143,14 +152,20 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       const content = pdfContentCheck(loadPdf, openForRendering);
       let text: string;
       try {
-        const questions = await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
+        const exportedAt = new Date();
+        const questions = cleanLayout
+          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox })
+          : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
         onActivity?.('export', subject.id, chosen.length);
         download(questions.bytes, `${base}.pdf`);
         text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
         if (withMarkscheme) {
-          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, stamp, content.hasContent);
+          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent);
+          const markschemeBytes = cleanLayout
+            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt })
+            : markscheme.bytes;
           onActivity?.('markscheme', subject.id, chosen.length);
-          download(markscheme.bytes, `${base} Markscheme.pdf`);
+          download(markschemeBytes, `${base} Markscheme.pdf`);
           text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
           text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
         }
@@ -281,6 +296,10 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
             <label className="check inline">
               <input type="checkbox" checked={withMarkscheme} disabled={busy} onChange={(e) => setWithMarkscheme(e.target.checked)} />
               <span>Generate selected-question markscheme PDF</span>
+            </label>
+            <label className="check inline" title="Trimmed questions on A4 pages with labels, page numbers and a watermark. Untick for the original layout.">
+              <input type="checkbox" checked={cleanLayout} disabled={busy} onChange={(e) => chooseLayout(e.target.checked)} />
+              <span>Clean layout</span>
             </label>
             <button type="button" className="btn" disabled={!chosen.length || busy} onClick={exportSelection}>
               {busy ? 'Exporting…' : 'Export PDF'}

@@ -1,7 +1,8 @@
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
-import type { Question } from './catalog';
+import type { Question, Slice } from './catalog';
 import { displayedRect, normaliseRotation, placement, userRect, type PageBox, type Rect } from './geometry';
-import type { HasContent } from './sliceContent';
+import type { ContentBox, HasContent } from './sliceContent';
+import { questionTitle } from './catalog';
 
 /**
  * Builds the two exports the desktop app produces, entirely in the browser:
@@ -164,9 +165,139 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
 }
 
 function clip(text: string, font: { widthOfTextAtSize(t: string, s: number): number }, size: number, maxWidth: number): string {
-  const safe = text.replace(/[^\x20-\x7E]/g, '?');
+  const safe = text.replace(/[^\x20-\x7E\u00A0-\u00FF\u2013\u2014\u2019\u201C\u201D]/g, '?');
   if (font.widthOfTextAtSize(safe, size) <= maxWidth) return safe;
   let end = safe.length;
   while (end > 1 && font.widthOfTextAtSize(`${safe.slice(0, end)}...`, size) > maxWidth) end -= 1;
   return `${safe.slice(0, end)}...`;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Clean layout (the default since 2026-09-28; the original layout above is kept unchanged and is one
+ * checkbox away). Each question slice is trimmed to its content, so the hatched answer margin,
+ * barcode, running header and continuation notes are dropped, and questions are stacked on uniform
+ * A4 pages under a label. Every page carries the website's header, a page-numbered footer with the
+ * account stamp, and a faint diagonal watermark.
+ * ---------------------------------------------------------------------------------------------- */
+
+const A4_W = 595.28;
+const A4_H = 841.89;
+const CLEAN_MARGIN_X = 42;
+const CLEAN_TOP = A4_H - 58; // below the header rule
+const CLEAN_BOTTOM = 46; // above the footer
+const LABEL_SIZE = 8.5;
+const QUESTION_GAP = 16;
+const SLICE_GAP = 4;
+export const SITE_NAME = 'IB Question Filter';
+
+export interface CleanOptions {
+  subject: string;
+  stamp?: string;
+  exportedAt?: Date;
+  contentBox?: ContentBox;
+}
+
+export async function exportQuestionsClean(questions: Question[], load: LoadPdf, title: string, options: CleanOptions): Promise<ExportResult> {
+  const out = await PDFDocument.create();
+  const font = await out.embedFont(StandardFonts.Helvetica);
+  const bold = await out.embedFont(StandardFonts.HelveticaBold);
+  const sources = new Map<string, Promise<PDFDocument>>();
+  const contentWidth = A4_W - 2 * CLEAN_MARGIN_X;
+  const contentHeight = CLEAN_TOP - CLEAN_BOTTOM;
+  let page: PDFPage | null = null;
+  let cursor = CLEAN_TOP;
+  const newPage = () => {
+    page = out.addPage([A4_W, A4_H]);
+    cursor = CLEAN_TOP;
+    return page;
+  };
+
+  for (const question of questions) {
+    const key = question.document.paperKey;
+    const source = await openSource(load, key, sources);
+    const boxes: Slice[] = [];
+    for (const slice of question.questionSlices) {
+      const trimmed = options.contentBox ? await options.contentBox(key, slice) : slice;
+      if (trimmed) boxes.push(trimmed);
+    }
+    if (!boxes.length) boxes.push(question.questionSlices[0]); // never drop a question
+    let first = true;
+    for (const slice of boxes) {
+      const src = source.getPage(slice.page);
+      const box = pageBox(src);
+      const shown = displayedRect(box, slice);
+      const width = shown.right - shown.left;
+      const height = shown.top - shown.bottom;
+      const labelSpace = first ? LABEL_SIZE + 8 : 0;
+      const scale = Math.min(1, contentWidth / width, (contentHeight - labelSpace) / height);
+      const need = height * scale + labelSpace;
+      const gap = page && cursor < CLEAN_TOP ? (first ? QUESTION_GAP : SLICE_GAP) : 0;
+      if (!page || cursor - gap - need < CLEAN_BOTTOM) newPage();
+      else cursor -= gap;
+      const target = page as unknown as PDFPage;
+      if (first) {
+        if (cursor < CLEAN_TOP) {
+          target.drawLine({ start: { x: CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, end: { x: A4_W - CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, thickness: 0.4, color: rgb(0.82, 0.82, 0.82) });
+        }
+        cursor -= LABEL_SIZE;
+        target.drawText(clip(questionTitle(question), bold, LABEL_SIZE, contentWidth), { x: CLEAN_MARGIN_X, y: cursor, size: LABEL_SIZE, font: bold, color: rgb(0.18, 0.43, 0.31) });
+        cursor -= 8;
+      }
+      const region = userRect(box, shown);
+      const embedded = await embedRegion(out, src, region);
+      const y = cursor - height * scale;
+      const p = placement(box, region, CLEAN_MARGIN_X, y, scale);
+      target.drawPage(embedded, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate) });
+      cursor = y;
+      first = false;
+    }
+  }
+  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, font, bold });
+  return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
+}
+
+/** Re-opens an export produced by exportMarkscheme and adds the clean-layout header, footer and watermark. */
+export async function decorateExport(bytes: Uint8Array, title: string, options: CleanOptions): Promise<Uint8Array> {
+  const out = await PDFDocument.load(bytes);
+  const font = await out.embedFont(StandardFonts.Helvetica);
+  const bold = await out.embedFont(StandardFonts.HelveticaBold);
+  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, font, bold });
+  return out.save();
+}
+
+async function decoratePages(out: PDFDocument, o: { title: string; subject: string; stamp?: string; exportedAt?: Date; font: Awaited<ReturnType<PDFDocument['embedFont']>>; bold: Awaited<ReturnType<PDFDocument['embedFont']>> }) {
+  const date = (o.exportedAt ?? new Date()).toISOString().slice(0, 10);
+  out.setTitle(o.title);
+  out.setAuthor(SITE_NAME);
+  out.setCreator(SITE_NAME);
+  out.setProducer(`${SITE_NAME} (pdf-lib)`);
+  out.setSubject(`${o.subject} questions exported from ${SITE_NAME} on ${date}`);
+  out.setKeywords([SITE_NAME, o.subject, 'IB', 'exported']);
+  const pages = out.getPages();
+  const grey = rgb(0.42, 0.42, 0.4);
+  const stamp = (o.stamp ?? '').trim();
+  pages.forEach((page, i) => {
+    const { width, height } = page.getSize();
+    // Faint diagonal watermark, drawn first so it sits under the header and footer text.
+    const wm = SITE_NAME;
+    const wmSize = Math.min(width, height) / 9;
+    const wmWidth = o.bold.widthOfTextAtSize(wm, wmSize);
+    const angle = Math.atan2(height, width);
+    page.drawText(wm, {
+      x: width / 2 - (Math.cos(angle) * wmWidth) / 2 + (Math.sin(angle) * wmSize) / 3,
+      y: height / 2 - (Math.sin(angle) * wmWidth) / 2 - (Math.cos(angle) * wmSize) / 3,
+      size: wmSize, font: o.bold, color: rgb(0.5, 0.5, 0.5), opacity: 0.07, rotate: degrees((angle * 180) / Math.PI),
+    });
+    // Header
+    page.drawText(SITE_NAME, { x: 24, y: height - 22, size: 9, font: o.bold, color: rgb(0.18, 0.43, 0.31) });
+    const right = clip(`${o.subject} · ${o.title}`, o.font, 8, width / 2);
+    page.drawText(right, { x: width - 24 - o.font.widthOfTextAtSize(right, 8), y: height - 22, size: 8, font: o.font, color: grey });
+    page.drawLine({ start: { x: 24, y: height - 28 }, end: { x: width - 24, y: height - 28 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.78) });
+    // Footer
+    page.drawLine({ start: { x: 24, y: 26 }, end: { x: width - 24, y: 26 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.78) });
+    const left = clip(stamp ? `${stamp} · exported from ${SITE_NAME}` : `Exported from ${SITE_NAME} · ${date}`, o.font, 7, width - 140);
+    page.drawText(left, { x: 24, y: 14, size: 7, font: o.font, color: grey });
+    const num = `Page ${i + 1} of ${pages.length}`;
+    page.drawText(num, { x: width - 24 - o.font.widthOfTextAtSize(num, 7.5), y: 14, size: 7.5, font: o.font, color: grey });
+  });
 }

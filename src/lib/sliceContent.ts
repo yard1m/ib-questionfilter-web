@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Slice } from './catalog';
 import type { LoadPdf } from './exportPdf';
+import { contentBox as findContentBox, type GrayRaster, type TextBox } from './contentBox';
 
 /**
  * Detects slices that would export as an empty page. Some catalog slices cover only the
@@ -44,6 +45,10 @@ export function isEmptySlice(slice: Slice, items: TextPoint[]): boolean {
 }
 
 export type HasContent = (key: string, slice: Slice) => Promise<boolean>;
+/** Resolves a slice to its content box (clean layout), or null when it holds only furniture. */
+export type ContentBox = (key: string, slice: Slice) => Promise<Slice | null>;
+
+const RASTER_SCALE = 1.5;
 
 /**
  * Builds a content check backed by pdf.js text extraction. Call `close` when the export ends.
@@ -51,25 +56,29 @@ export type HasContent = (key: string, slice: Slice) => Promise<boolean>;
  */
 export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> }) {
   const docs = new Map<string, { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> }>();
-  const pages = new Map<string, Promise<TextPoint[]>>();
+  const pages = new Map<string, Promise<TextBox[]>>();
+  const rasters = new Map<string, Promise<{ raster: GrayRaster; width: number; height: number }>>();
+  const docFor = async (key: string) => {
+    let doc = docs.get(key);
+    if (!doc) {
+      doc = open(await load(key));
+      docs.set(key, doc);
+    }
+    return doc.promise;
+  };
   const text = (key: string, index: number) => {
     const id = `${key}#${index}`;
     let found = pages.get(id);
     if (!found) {
       found = (async () => {
-        let doc = docs.get(key);
-        if (!doc) {
-          doc = open(await load(key));
-          docs.set(key, doc);
-        }
-        const page = await (await doc.promise).getPage(index + 1);
+        const page = await (await docFor(key)).getPage(index + 1);
         const viewport = page.getViewport({ scale: 1 });
         const content = await page.getTextContent();
         page.cleanup();
         return content.items.flatMap((item) => {
           if (!('str' in item) || !item.str.trim()) return [];
           const [x, y] = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
-          return [{ x, y: viewport.height - y, text: item.str }];
+          return [{ x, y: viewport.height - y, text: item.str, width: item.width, height: item.height || Math.abs(item.transform[3]) }];
         });
       })();
       pages.set(id, found);
@@ -84,10 +93,41 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
       return true;
     }
   };
+  // Rasterises a page to grey levels once; used only by the clean export layout.
+  const raster = (key: string, index: number) => {
+    const id = `${key}#${index}`;
+    let found = rasters.get(id);
+    if (!found) {
+      found = (async () => {
+        const page = await (await docFor(key)).getPage(index + 1);
+        const viewport = page.getViewport({ scale: RASTER_SCALE });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvas, viewport, annotationMode: 0 }).promise;
+        const rgba = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+        const data = new Uint8Array(canvas.width * canvas.height);
+        for (let i = 0, j = 0; i < data.length; i += 1, j += 4) data[i] = (rgba[j] * 299 + rgba[j + 1] * 587 + rgba[j + 2] * 114) / 1000;
+        page.cleanup();
+        return { raster: { width: canvas.width, height: canvas.height, scale: RASTER_SCALE, data }, width: viewport.width / RASTER_SCALE, height: viewport.height / RASTER_SCALE };
+      })();
+      rasters.set(id, found);
+    }
+    return found;
+  };
+  const contentBox: ContentBox = async (key, slice) => {
+    try {
+      const [r, t] = await Promise.all([raster(key, slice.page), text(key, slice.page)]);
+      return findContentBox(slice, { width: r.width, height: r.height }, r.raster, t);
+    } catch {
+      return slice; // unreadable page: keep the original crop rather than lose the question
+    }
+  };
   const close = async () => {
     await Promise.all([...docs.values()].map((doc) => doc.destroy().catch(() => undefined)));
     docs.clear();
     pages.clear();
+    rasters.clear();
   };
-  return { hasContent, close };
+  return { hasContent, contentBox, close };
 }
