@@ -7,6 +7,7 @@ import {
 import type { DesignMode } from '../lib/design';
 import { DesignToggle } from './DesignToggle';
 import { Preview } from './Preview';
+import { TopicStats } from './TopicStats';
 
 type LoadPdf = (key: string) => Promise<Uint8Array>;
 
@@ -64,6 +65,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     try { return window.localStorage.getItem('ibqf.exportLayout') !== 'original'; } catch { return true; }
   });
   const [adminFormat, setAdminFormat] = useState(true);
+  const [showStats, setShowStats] = useState(false);
   const unmarked = isAdmin && adminFormat;
   const siteUrl = `${window.location.origin}${import.meta.env.BASE_URL}`;
   const chooseLayout = (clean: boolean) => {
@@ -301,6 +303,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                   onClick={() => setSelected(new Set(visible.map((q) => q.id)))}>Select filtered</button>
                 <button type="button" className="btn secondary" disabled={!chosen.length}
                   onClick={() => setSelected(new Set())}>Clear selection</button>
+                <button type="button" className="btn secondary" aria-expanded={showStats} disabled={!visible.length}
+                  onClick={() => setShowStats((open) => !open)}>{showStats ? 'Hide topic stats' : 'Topic stats'}</button>
               </div>
             </div>
             <div className="toolbar-row toolbar-export">
@@ -325,6 +329,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
               </button>
             </div>
           </div>
+          {showStats && (
+            <section className="panel stats-panel" aria-label="Topic statistics">
+              <TopicStats questions={visible} />
+            </section>
+          )}
           {busy && progress && (
             <div className="export-progress" role="status" aria-live="polite">
               <div className="export-progress-head">
