@@ -98,7 +98,7 @@ export async function exportQuestions(questions: Question[], load: LoadPdf, titl
   return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
-export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent): Promise<ExportResult> {
+export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, contentBox?: ContentBox): Promise<ExportResult> {
   const out = await PDFDocument.create();
   out.setTitle(title);
   out.setCreator('IB Question Filter');
@@ -117,7 +117,17 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
     }
     const source = await openSource(load, question.document.markschemeKey, sources);
     const seen = new Set<string>();
-    for (const slice of await contentSlices(question.answerSlices, question.document.markschemeKey, hasContent)) {
+    // Clean layout: trim each answer crop to its content (drops markscheme headers, footers and blank space).
+    let answerSlices: Slice[] = await contentSlices(question.answerSlices, question.document.markschemeKey, hasContent);
+    if (contentBox) {
+      const trimmed: Slice[] = [];
+      for (const slice of answerSlices) {
+        const box = await contentBox(question.document.markschemeKey, slice);
+        if (box) trimmed.push(box);
+      }
+      if (trimmed.length) answerSlices = trimmed;
+    }
+    for (const slice of answerSlices) {
       const identity = [slice.page, slice.lower.toFixed(1), slice.upper.toFixed(1), (slice.left ?? 0).toFixed(1), (slice.right ?? 0).toFixed(1)].join(':');
       if (seen.has(identity)) continue;
       seen.add(identity);

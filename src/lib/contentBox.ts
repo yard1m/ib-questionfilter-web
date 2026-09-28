@@ -38,6 +38,7 @@ const NOTE_PATTERNS = [
   /^\(?this question continues on the following page\)?\.?$/i,
   /^\(?question \d+ continued\)?\.?$/i,
   /^\(?this question continues on page \d+\)?\.?$/i,
+  /^\(?continued\s*(\.{2,}|…)?\)?$/i, // markscheme "(continued…)" notes
 ];
 
 // The boxed notice printed on intentionally blank pages, often split across several text items.

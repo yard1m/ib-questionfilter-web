@@ -166,7 +166,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         download(questions.bytes, `${base}.pdf`);
         text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
         if (withMarkscheme) {
-          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent);
+          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent, cleanLayout ? content.contentBox : undefined);
           const markschemeBytes = cleanLayout
             ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl })
             : markscheme.bytes;
