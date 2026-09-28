@@ -64,6 +64,15 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
   const c0 = toCol(left), c1 = toCol(right), r0 = toRow(top), r1 = toRow(bottom);
   const w = c1 - c0 + 1;
   const mask = new Uint8Array(w * (r1 - r0 + 1));
+  // Blank-page notice boxes ("Please do not write on this page. Answers written on this page will
+  // not be marked.") are blanked out wholesale, border included, wherever they sit in the slice.
+  const noticeAnchors = text.filter((t) => /write on this page|will not be marked|answers written on this page/i.test(t.text));
+  const noticeRects = noticeAnchors.length ? clusterNotice(text, noticeAnchors) : [];
+  for (const [x0, y0, x1, y1] of noticeRects) {
+    const a = Math.max(c0, toCol(x0)), b = Math.min(c1, toCol(x1));
+    const ra = Math.max(r0, toRow(y1)), rb = Math.min(r1, toRow(y0));
+    for (let row = ra; row <= rb; row += 1) mask.fill(1, (row - r0) * w + (a - c0), (row - r0) * w + (b - c0) + 1);
+  }
   for (const t of masked) {
     const a = Math.max(c0, toCol(t.x - 2)), b = Math.min(c1, toCol(t.x + t.width + 2));
     const ra = Math.max(r0, toRow(t.y + t.height + 3)), rb = Math.min(r1, toRow(t.y - 3));
@@ -122,4 +131,18 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
     lower: Math.max(bottom, page.height - maxY / s - PAD),
     upper: Math.min(top, page.height - minY / s + PAD),
   };
+}
+
+/** Groups notice words near each anchor into boxes, padded to cover the printed frame around them. */
+function clusterNotice(text: TextBox[], anchors: TextBox[]): [number, number, number, number][] {
+  const words = /^(please|do not|do|not|write|on this page\.?|write on this page\.?|answers written on this page|will not be marked\.?|answers|written|on|this|page\.?|will|be|marked\.?)$/i;
+  const rects: [number, number, number, number][] = [];
+  for (const a of anchors) {
+    const near = text.filter((t) => Math.abs(t.y - a.y) < 40 && t.x > a.x - 160 && t.x < a.x + a.width + 160
+      && (t === a || words.test(t.text.trim()) || /write on this page|will not be marked|answers written/i.test(t.text)));
+    const x0 = Math.min(...near.map((t) => t.x)), x1 = Math.max(...near.map((t) => t.x + t.width));
+    const y0 = Math.min(...near.map((t) => t.y)), y1 = Math.max(...near.map((t) => t.y + t.height));
+    rects.push([x0 - 30, y0 - 22, x1 + 30, y1 + 22]);
+  }
+  return rects;
 }

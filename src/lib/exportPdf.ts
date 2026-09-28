@@ -188,7 +188,11 @@ const CLEAN_BOTTOM = 46; // above the footer
 const LABEL_SIZE = 8.5;
 const QUESTION_GAP = 16;
 const SLICE_GAP = 4;
-export const SITE_NAME = 'IB Question Filter';
+export const SITE_NAME = 'Little Red Bank';
+const MOTTO = 'OMNIBUS PATEAT AEQUA VIA AD SCIENTIAM!';
+const RED = rgb(0.839, 0.325, 0.263); // #d65343, the site's accent
+const GOLD = rgb(0.784, 0.643, 0.353); // #c8a45a
+const INK = rgb(0.086, 0.098, 0.114);
 
 export interface CleanOptions {
   subject: string;
@@ -237,10 +241,10 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
       const target = page as unknown as PDFPage;
       if (first) {
         if (cursor < CLEAN_TOP) {
-          target.drawLine({ start: { x: CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, end: { x: A4_W - CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, thickness: 0.4, color: rgb(0.82, 0.82, 0.82) });
+          target.drawLine({ start: { x: CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, end: { x: A4_W - CLEAN_MARGIN_X, y: cursor + QUESTION_GAP / 2 }, thickness: 0.4, color: GOLD, opacity: 0.6 });
         }
         cursor -= LABEL_SIZE;
-        target.drawText(clip(questionTitle(question), bold, LABEL_SIZE, contentWidth), { x: CLEAN_MARGIN_X, y: cursor, size: LABEL_SIZE, font: bold, color: rgb(0.18, 0.43, 0.31) });
+        target.drawText(clip(questionTitle(question), bold, LABEL_SIZE, contentWidth), { x: CLEAN_MARGIN_X, y: cursor, size: LABEL_SIZE, font: bold, color: RED });
         cursor -= 8;
       }
       const region = userRect(box, shown);
@@ -278,26 +282,35 @@ async function decoratePages(out: PDFDocument, o: { title: string; subject: stri
   const stamp = (o.stamp ?? '').trim();
   pages.forEach((page, i) => {
     const { width, height } = page.getSize();
-    // Faint diagonal watermark, drawn first so it sits under the header and footer text.
-    const wm = SITE_NAME;
-    const wmSize = Math.min(width, height) / 9;
-    const wmWidth = o.bold.widthOfTextAtSize(wm, wmSize);
-    const angle = Math.atan2(height, width);
-    page.drawText(wm, {
-      x: width / 2 - (Math.cos(angle) * wmWidth) / 2 + (Math.sin(angle) * wmSize) / 3,
-      y: height / 2 - (Math.sin(angle) * wmWidth) / 2 - (Math.cos(angle) * wmSize) / 3,
-      size: wmSize, font: o.bold, color: rgb(0.5, 0.5, 0.5), opacity: 0.07, rotate: degrees((angle * 180) / Math.PI),
-    });
-    // Header
-    page.drawText(SITE_NAME, { x: 24, y: height - 22, size: 9, font: o.bold, color: rgb(0.18, 0.43, 0.31) });
+    // Diagonal wordmark watermark in the site's colours: LITTLE and BANK in gold, RED in red.
+    const parts: [string, ReturnType<typeof rgb>][] = [['LITTLE ', GOLD], ['RED ', RED], ['BANK', GOLD]];
+    const wmSize = Math.min(width, height) / 8.5;
+    const total = parts.reduce((n, [t]) => n + o.bold.widthOfTextAtSize(t, wmSize), 0);
+    const angle = Math.atan2(height, width) * 0.85;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    let wx = width / 2 - (cos * total) / 2 + (sin * wmSize) / 3;
+    let wy = height / 2 - (sin * total) / 2 - (cos * wmSize) / 3;
+    for (const [t, color] of parts) {
+      page.drawText(t, { x: wx, y: wy, size: wmSize, font: o.bold, color, opacity: 0.11, rotate: degrees((angle * 180) / Math.PI) });
+      const adv = o.bold.widthOfTextAtSize(t, wmSize);
+      wx += cos * adv; wy += sin * adv;
+    }
+    // Header: wordmark left, subject and title right, gold rule.
+    let hx = 24;
+    for (const [t, color] of [['LITTLE ', INK], ['RED ', RED], ['BANK', INK]] as [string, ReturnType<typeof rgb>][]) {
+      page.drawText(t, { x: hx, y: height - 22, size: 9.5, font: o.bold, color });
+      hx += o.bold.widthOfTextAtSize(t, 9.5);
+    }
     const right = clip(`${o.subject} · ${o.title}`, o.font, 8, width / 2);
     page.drawText(right, { x: width - 24 - o.font.widthOfTextAtSize(right, 8), y: height - 22, size: 8, font: o.font, color: grey });
-    page.drawLine({ start: { x: 24, y: height - 28 }, end: { x: width - 24, y: height - 28 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.78) });
-    // Footer
-    page.drawLine({ start: { x: 24, y: 26 }, end: { x: width - 24, y: 26 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.78) });
-    const left = clip(stamp ? `${stamp} · exported from ${SITE_NAME}` : `Exported from ${SITE_NAME} · ${date}`, o.font, 7, width - 140);
+    page.drawLine({ start: { x: 24, y: height - 28 }, end: { x: width - 24, y: height - 28 }, thickness: 0.8, color: GOLD });
+    // Footer: gold rule, stamp left, motto centre, page number right.
+    page.drawLine({ start: { x: 24, y: 26 }, end: { x: width - 24, y: 26 }, thickness: 0.8, color: GOLD });
+    const left = clip(stamp || `Exported from ${SITE_NAME} · ${date}`, o.font, 7, width / 2 - 16);
     page.drawText(left, { x: 24, y: 14, size: 7, font: o.font, color: grey });
+    const motto = o.font.widthOfTextAtSize(MOTTO, 6.2);
+    if (motto < width / 3) page.drawText(MOTTO, { x: width / 2 + 8 + (width / 2 - 110 - motto) / 2, y: 14, size: 6.2, font: o.font, color: GOLD });
     const num = `Page ${i + 1} of ${pages.length}`;
-    page.drawText(num, { x: width - 24 - o.font.widthOfTextAtSize(num, 7.5), y: 14, size: 7.5, font: o.font, color: grey });
+    page.drawText(num, { x: width - 24 - o.font.widthOfTextAtSize(num, 7.5), y: 14, size: 7.5, font: o.bold, color: RED });
   });
 }
