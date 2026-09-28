@@ -83,8 +83,11 @@ export function filterQuestions(questions: Question[], subjectId: string, filter
 }
 
 /** Desktop display order: catalog document order, then question order within the document. */
+/** Newest examination first (year, then November before May), then the paper's own order. */
 export function displayOrder(a: Question, b: Question): number {
-  return a.document.order - b.document.order || a.order - b.order;
+  const session = (q: Question) => (q.document.session === 'November' ? 1 : 0);
+  return b.document.year - a.document.year || session(b) - session(a)
+    || a.document.order - b.document.order || a.order - b.order;
 }
 
 /** Drops selected questions that are no longer visible, like pruneSelectionToVisibleQuestions. */
