@@ -37,7 +37,11 @@ const FOOTER_BAND = 50; // barcode, paper code and copyright line
 function bleed(page: PageSize): { x: number; y: number } {
   const landscape = page.width > page.height; // markscheme tables are often landscape A4 (842 x 595)
   const [w, h] = landscape ? [842, 595] : [595, 842];
-  return { x: Math.max(0, (page.width - w) / 2), y: Math.max(0, (page.height - h) / 2) };
+  const dx = (page.width - w) / 2, dy = (page.height - h) / 2;
+  // Bleed grows every side by the same amount; a merely wider or taller page (e.g. a 1195 x 595
+  // markscheme) is not bleed and keeps the normal margins.
+  if (dx < 5 || dy < 5 || Math.abs(dx - dy) > 5) return { x: 0, y: 0 };
+  return { x: dx, y: dy };
 }
 
 const INK = 190; // luminance below this counts as content

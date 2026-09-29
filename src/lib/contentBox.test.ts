@@ -121,3 +121,14 @@ describe('landscape markscheme pages (842 x 595 pt)', () => {
   });
 });
 
+describe('extra-wide markscheme pages (1195 x 595 pt)', () => {
+  it('keep normal margins instead of a bleed shift', () => {
+    const W = 1195, H = 595;
+    const data = new Uint8Array(W * H).fill(255);
+    for (let y = 300; y < 400; y += 1) for (let x = 45; x < 1150; x += 1) data[(H - 1 - y) * W + x] = 0;
+    const box = contentBox({ page: 0, lower: 0, upper: H, left: null, right: null }, { width: W, height: H },
+      { width: W, height: H, scale: 1, data }, [{ x: 45, y: 390, width: 300, height: 10, text: 'Answers' }])!;
+    expect(box.left).toBeLessThan(46);
+  });
+});
+
