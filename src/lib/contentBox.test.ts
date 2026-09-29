@@ -65,6 +65,12 @@ describe('clean-layout content box', () => {
       expect(isContinuationNote(t), t).toBe(true);
   });
 
+  it('keeps the padding clear of a continuation note printed just under an answer box', () => {
+    const r = raster([[100, 500, 480, 700], [60, 84, 535, 86], [60, 68, 330, 79]]);
+    const note = [{ x: 60, y: 68, width: 270, height: 0, text: '(This question continues on the following page)' }];
+    expect(contentBox(whole, PAGE, r, note)!.lower).toBeGreaterThanOrEqual(79); // note ink ends at 79
+  });
+
   it('drops a trailing continuation note and returns null for a notice-only slice', () => {
     const r = raster([[100, 500, 480, 700], [60, 440, 330, 452]]);
     const note = [{ x: 60, y: 441, width: 270, height: 10, text: '(This question continues on the following page)' }];

@@ -108,7 +108,7 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
   }
   for (const t of masked) {
     const a = Math.max(c0, toCol(t.x - 2)), b = Math.min(c1, toCol(t.x + t.width + 2));
-    const ra = Math.max(r0, toRow(t.y + t.height + 3)), rb = Math.min(r1, toRow(t.y - 3));
+    const ra = Math.max(r0, toRow(t.y + Math.max(t.height, 10) + 3)), rb = Math.min(r1, toRow(t.y - 3)); // pdf.js can report ~0 height
     for (let row = ra; row <= rb; row += 1) mask.fill(1, (row - r0) * w + (a - c0), (row - r0) * w + (b - c0) + 1);
   }
   // Per-row ink extent, then bands of ink separated by blank space.
@@ -190,12 +190,21 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
     }
   }
 
+  // Padding must not reach back into masked furniture (a continuation note printed just under a box).
+  let upper = Math.min(top, page.height - minY / s + PAD);
+  const inkBottom = page.height - maxY / s, inkTop = page.height - minY / s;
+  for (const t of masked) {
+    const tTop = t.y + Math.max(t.height, 10);
+    if (tTop <= inkBottom + 0.5 && tTop + 1 > lower) lower = tTop + 1;
+    if (t.y - 1 >= inkTop - 0.5 && t.y - 1 < upper) upper = t.y - 1;
+  }
+
   return {
     page: slice.page,
     left: Math.max(left, minX / s - PAD),
     right: Math.min(right, maxX / s + PAD),
     lower: Math.max((FOOTER_BAND + bleed(page).y), lower),
-    upper: Math.min(top, page.height - minY / s + PAD),
+    upper,
   };
 }
 
