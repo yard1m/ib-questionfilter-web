@@ -232,6 +232,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           <div className="account">
             <span className="muted small account-name">{account}</span>
             <DesignToggle mode={designMode} onChange={onDesignModeChange} />
+            {isAdmin && accountTools && (
+              <button type="button" className="btn" onClick={() => window.open(`${window.location.pathname}?admin=1`, 'lrb-admin')}>
+                Admin ↗
+              </button>
+            )}
             {accountTools && (
               <button type="button" className="btn secondary" aria-expanded={accountOpen} onClick={() => setAccountOpen((open) => !open)}>
                 Account
