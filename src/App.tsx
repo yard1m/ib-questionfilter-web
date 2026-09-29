@@ -10,6 +10,9 @@ import { QuestionBrowser } from './components/QuestionBrowser';
 import { AdminPanel } from './components/AdminPanel';
 import { ChangePassword } from './components/ChangePassword';
 import { callMembers } from './lib/admin';
+import { AdminDashboard } from './components/AdminDashboard';
+
+const ADMIN_VIEW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('admin') === '1';
 
 type CatalogState =
   | { status: 'idle' }
@@ -66,6 +69,7 @@ export function App({ config, localSourceFactory }: {
     return () => { live = false; };
   }, [client, session]);
   const justSignedIn = useRef(false);
+  const signInToLog = useRef(false); // a fresh password sign-in still to be recorded
 
   useEffect(() => {
     document.documentElement.dataset.design = designMode;
@@ -157,8 +161,9 @@ export function App({ config, localSourceFactory }: {
       return error instanceof LoginInputError ? error.message : 'Incorrect username or password.';
     }
     justSignedIn.current = true;
+    signInToLog.current = true;
     const { error } = await client.auth.signInWithPassword({ email, password });
-    if (error) justSignedIn.current = false;
+    if (error) { justSignedIn.current = false; signInToLog.current = false; }
     return error ? signInErrorMessage(error) : null;
   }, [client, config.usernameDomain]);
 
@@ -168,10 +173,27 @@ export function App({ config, localSourceFactory }: {
     if (client) await client.auth.signOut();
   }, [client, cache]);
 
-  const logActivity = useCallback((kind: 'preview' | 'export' | 'markscheme', subject: string, items: number) => {
+  // supabase-js only sends an RPC once it is awaited or then-ed; a bare `void client.rpc(...)` never
+  // leaves the browser, which is why no activity was ever recorded before 2026-09-29.
+  const logActivity = useCallback((kind: 'preview' | 'export' | 'markscheme' | 'visit' | 'sign_in', subject: string, items: number, detail?: string) => {
     if (!client || config.localCorpus) return;
-    void client.rpc('log_activity', { kind, subject, items });
+    client.rpc('log_activity', { kind, subject, items, detail: detail ?? null }).then(() => undefined, () => undefined);
   }, [client, config.localCorpus]);
+
+  // Sign-ins (every account, admins included) and a visit heartbeat while the site is open, so the
+  // admin dashboard sees people who stay signed in for days and who is online right now.
+  useEffect(() => {
+    if (config.localCorpus || access !== 'ok' || !client) return;
+    if (signInToLog.current) {
+      signInToLog.current = false;
+      logActivity('sign_in', 'site', 1);
+    }
+    const beat = () => { if (document.visibilityState === 'visible') logActivity('visit', 'site', 1); };
+    beat();
+    const timer = window.setInterval(beat, 5 * 60_000);
+    document.addEventListener('visibilitychange', beat);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', beat); };
+  }, [access, client, config.localCorpus, logActivity]);
 
   const loadPdf = useCallback((key: string) => {
     if (!source) return Promise.reject(new Error('Not signed in'));
@@ -194,6 +216,12 @@ export function App({ config, localSourceFactory }: {
   }
 
   const account = config.localCorpus ? 'Local corpus (development)' : (session?.user.email ?? '').replace(`@${config.usernameDomain}`, '');
+
+  if (ADMIN_VIEW && client && !config.localCorpus) {
+    return isAdmin
+      ? <AdminDashboard client={client} account={account} catalog={catalogState.status === 'ready' ? catalogState.catalog : null} onSignOut={signOut} />
+      : <Centered><h1>Admin dashboard</h1><p className="muted" role="status">Checking admin access…</p><p className="small muted">Only admin accounts can open this page.</p></Centered>;
+  }
 
   switch (catalogState.status) {
     case 'ready':

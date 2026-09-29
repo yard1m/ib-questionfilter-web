@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
+import { exportDetail } from '../lib/activity';
+
+/** "Paper 1 HL TZ2 · May 2024" for the admin activity log. */
+const paperOf = (q: Question) => questionTitle(q).split(' · ').slice(1).join(' · ');
 import {
   cycleTopic, defaultFilters, filterQuestions, pruneSelection, setTopicMode, toggleFacet, topicState, type Filters, type TopicState,
 } from '../lib/filter';
@@ -66,7 +70,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   stamp?: string;
   isAdmin?: boolean;
   /** Counts previews and exports for the admin panel's usage columns. */
-  onActivity?: (kind: 'preview' | 'export' | 'markscheme', subject: string, items: number) => void;
+  onActivity?: (kind: 'preview' | 'export' | 'markscheme', subject: string, items: number, detail?: string) => void;
 }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [subjectId, setSubjectId] = useState(catalog.subjects[0]?.id ?? '');
@@ -179,7 +183,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         const questions = cleanLayout
           ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox, admin: unmarked, siteUrl })
           : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
-        onActivity?.('export', subject.id, chosen.length);
+        onActivity?.('export', subject.id, chosen.length, exportDetail(chosen.map(paperOf)));
         download(questions.bytes, `${base}.pdf`);
         text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
         if (withMarkscheme) {
@@ -187,7 +191,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           const markschemeBytes = cleanLayout
             ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl })
             : markscheme.bytes;
-          onActivity?.('markscheme', subject.id, chosen.length);
+          onActivity?.('markscheme', subject.id, chosen.length, exportDetail(chosen.map(paperOf)));
           download(markschemeBytes, `${base} Markscheme.pdf`);
           text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
           text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
@@ -415,7 +419,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                       </div>
                     )}
                   </div>
-                  <button type="button" className="btn secondary qaction" onClick={() => { setPreview(q); onActivity?.('preview', subject.id, 1); }}>
+                  <button type="button" className="btn secondary qaction" onClick={() => { setPreview(q); onActivity?.('preview', subject.id, 1, questionTitle(q)); }}>
                     <span className="classic-action">Preview</span>
                     <span className="archive-action">Read</span>
                   </button>

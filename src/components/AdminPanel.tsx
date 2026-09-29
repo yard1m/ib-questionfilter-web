@@ -13,7 +13,7 @@ import {
  * Generated passwords are shown exactly once with a copy button; dismissing or generating
  * another clears the previous one from state (they are never stored anywhere).
  */
-export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalog?: Catalog }) {
+export function AdminPanel({ client, catalog, embedded = false }: { client: SupabaseClient; catalog?: Catalog; embedded?: boolean }) {
   const [status, setStatus] = useState<number | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [entries, setEntries] = useState<AuditEntry[]>([]);
@@ -120,7 +120,14 @@ export function AdminPanel({ client, catalog }: { client: SupabaseClient; catalo
 
   return (
     <section className="panel admin" aria-label="Friend accounts">
-      <h2>Friend accounts</h2>
+      <div className="admin-head">
+        <h2>Friend accounts</h2>
+        {!embedded && (
+          <button type="button" className="btn secondary" onClick={() => window.open(`${window.location.pathname}?admin=1`, 'lrb-admin')}>
+            Open admin dashboard ↗
+          </button>
+        )}
+      </div>
       <p className="muted small">
         Each account works on one device at a time: signing in elsewhere signs the other device out.
         Exported PDFs carry the account name. {flagged > 0 && <strong>{flagged} account{flagged === 1 ? '' : 's'} flagged for possible sharing.</strong>}
