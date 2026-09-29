@@ -51,12 +51,6 @@ describe('clean-layout content box', () => {
     expect(box.lower).toBeLessThan(72);
   });
 
-  it('cuts a hatched margin strip printed inside the side margin', () => {
-    const r = raster([[100, 500, 480, 700], [540, 60, 550, 800]]); // strip 10pt wide at x=540
-    const box = contentBox(whole, PAGE, r, [{ x: 100, y: 690, width: 200, height: 10, text: 'Find x.' }])!;
-    expect(box.right).toBeLessThan(500);
-  });
-
   it('returns null for a page holding only answer lines and furniture, and drops Section B boilerplate', () => {
     const r = raster([[100, 300, 480, 302], [100, 330, 480, 332], [280, 800, 300, 808]]);
     const lines = [{ x: 100, y: 300, width: 380, height: 3, text: '. . . . . . . . . . . .' }, { x: 100, y: 330, width: 380, height: 3, text: '..........' }];
@@ -107,6 +101,18 @@ describe('bleed pages (2019-2020 papers, 642 x 889 pt)', () => {
       { width: W, height: H, scale: 1, data }, [{ x: 100, y: 690, width: 200, height: 10, text: 'Find x.' }])!;
     expect(box.right).toBeLessThan(560);
     expect(box.lower).toBeGreaterThan(480);
+  });
+});
+
+describe('landscape markscheme pages (842 x 595 pt)', () => {
+  it('are not mistaken for bleed pages, so table text near the side margin is kept', () => {
+    const W = 842, H = 595;
+    const data = new Uint8Array(W * H).fill(255);
+    for (let y = 300; y < 400; y += 1) for (let x = 45; x < 800; x += 1) data[(H - 1 - y) * W + x] = 0;
+    const box = contentBox({ page: 0, lower: 0, upper: H, left: null, right: null }, { width: W, height: H },
+      { width: W, height: H, scale: 1, data }, [{ x: 45, y: 390, width: 300, height: 10, text: 'fullerene: each carbon is bonded to 3 C' }])!;
+    expect(box.left).toBeLessThan(46);
+    expect(box.right).toBeGreaterThan(799);
   });
 });
 

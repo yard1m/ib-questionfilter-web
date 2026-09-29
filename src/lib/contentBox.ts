@@ -35,13 +35,14 @@ const FOOTER_BAND = 50; // barcode, paper code and copyright line
  * 595 x 842), with the A4 content centred on it. Every fixed band shifts inward by the bleed.
  */
 function bleed(page: PageSize): { x: number; y: number } {
-  return { x: Math.max(0, (page.width - 595) / 2), y: Math.max(0, (page.height - 842) / 2) };
+  const landscape = page.width > page.height; // markscheme tables are often landscape A4 (842 x 595)
+  const [w, h] = landscape ? [842, 595] : [595, 842];
+  return { x: Math.max(0, (page.width - w) / 2), y: Math.max(0, (page.height - h) / 2) };
 }
 
 const INK = 190; // luminance below this counts as content
 const PAD = 6;
 const BAND_GAP = 9; // points of blank space that separate two bands
-const STRIP_REACH = 45; // how far inside the side margin a hatched strip may sit
 const PAGE_FOOT_CUT = 90; // slice floors below this are the page-foot cut, not a question boundary
 const BARCODE_ZONE = 95; // points above the page foot where the paper barcode is printed
 
@@ -80,11 +81,7 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
   const top = Math.min(slice.upper, page.height - (HEADER_BAND + bleed(page).y));
   if (right - left < 20 || top - bottom < 4) return null;
 
-  // Older papers print the hatched "do not write here" strip further in than (SIDE_MARGIN + bleed(page).x). It shows as a
-  // run of several adjacent columns inked on nearly every row; an answer-box border is only 1-2 pt wide.
-  const strip = hatchedStrip(raster, page, slice, left, right);
-  const l = strip.left, r = strip.right;
-  return trimmed(slice, page, raster, text, l, r, bottom, top);
+  return trimmed(slice, page, raster, text, left, right, bottom, top);
 }
 
 function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox[], left: number, right: number, bottom: number, top: number): Slice | null {
@@ -208,31 +205,18 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
   };
 }
 
-/** Narrows [left, right] to exclude a hatched margin strip printed inside the side margins. */
-function hatchedStrip(raster: GrayRaster, page: PageSize, slice: Slice, left: number, right: number): { left: number; right: number } {
-  const s = raster.scale;
-  const r0 = Math.max(0, Math.round((page.height - Math.min(slice.upper, page.height - (HEADER_BAND + bleed(page).y))) * s));
-  const r1 = Math.min(raster.height - 1, Math.round((page.height - Math.max(slice.lower, (FOOTER_BAND + bleed(page).y))) * s));
-  if (r1 - r0 < 40 * s) return { left, right };
-  const coverage = (col: number) => {
-    let inked = 0;
-    for (let row = r0; row <= r1; row += 1) if (raster.data[row * raster.width + col] < INK) inked += 1;
-    return inked / (r1 - r0 + 1);
-  };
-  const minRun = Math.round(4 * s);
-  const scan = (from: number, to: number, step: number) => {
-    let run = 0;
-    for (let col = from; step > 0 ? col <= to : col >= to; col += step) {
-      if (coverage(col) > 0.6) run += 1;
-      else if (run >= minRun) return col; // first clear column inside the strip
-      else run = 0;
-    }
-    return -1;
-  };
-  const rightEdge = Math.round(right * s), leftEdge = Math.round(left * s), reach = Math.round(STRIP_REACH * s);
-  const rs = scan(rightEdge, rightEdge - reach, -1);
-  const ls = scan(leftEdge, leftEdge + reach, 1);
-  return { left: ls >= 0 ? ls / s + 2 : left, right: rs >= 0 ? rs / s - 2 : right };
+/** Groups text items that share a baseline into lines, left to right. */
+export function textLines(text: TextBox[]): { text: string; items: TextBox[] }[] {
+  const sorted = text.slice().sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: TextBox[][] = [];
+  for (const t of sorted) {
+    const line = lines.find((l) => Math.abs(l[0].y - t.y) < 3);
+    if (line) line.push(t); else lines.push([t]);
+  }
+  return lines.map((items) => {
+    items.sort((a, b) => a.x - b.x);
+    return { text: items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim(), items };
+  });
 }
 
 /** Groups notice words near each anchor into boxes, padded to cover the printed frame around them. */
@@ -247,18 +231,4 @@ function clusterNotice(text: TextBox[], anchors: TextBox[]): [number, number, nu
     rects.push([x0 - 30, y0 - 22, x1 + 30, y1 + 22]);
   }
   return rects;
-}
-
-/** Groups text items that share a baseline into lines, left to right. */
-export function textLines(text: TextBox[]): { text: string; items: TextBox[] }[] {
-  const sorted = text.slice().sort((a, b) => b.y - a.y || a.x - b.x);
-  const lines: TextBox[][] = [];
-  for (const t of sorted) {
-    const line = lines.find((l) => Math.abs(l[0].y - t.y) < 3);
-    if (line) line.push(t); else lines.push([t]);
-  }
-  return lines.map((items) => {
-    items.sort((a, b) => a.x - b.x);
-    return { text: items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim(), items };
-  });
 }
