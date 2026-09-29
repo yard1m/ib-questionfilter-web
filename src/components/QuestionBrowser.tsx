@@ -8,6 +8,7 @@ import type { DesignMode } from '../lib/design';
 import { DesignToggle } from './DesignToggle';
 import { Preview } from './Preview';
 import { TopicStats } from './TopicStats';
+import { Practice } from './Practice';
 
 type LoadPdf = (key: string) => Promise<Uint8Array>;
 
@@ -66,6 +67,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   });
   const [adminFormat, setAdminFormat] = useState(true);
   const [showStats, setShowStats] = useState(false);
+  const [practising, setPractising] = useState(false);
+  const closePractice = useCallback(() => setPractising(false), []);
   const unmarked = isAdmin && adminFormat;
   const siteUrl = `${window.location.origin}${import.meta.env.BASE_URL}`;
   const chooseLayout = (clean: boolean) => {
@@ -305,6 +308,9 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                   onClick={() => setSelected(new Set())}>Clear selection</button>
                 <button type="button" className="btn secondary" aria-expanded={showStats} disabled={!visible.length}
                   onClick={() => setShowStats((open) => !open)}>{showStats ? 'Hide topic stats' : 'Topic stats'}</button>
+                <button type="button" className="btn secondary" disabled={!visible.length}
+                  title="One question at a time with the markscheme; progress is saved in this browser."
+                  onClick={() => setPractising(true)}>Practice</button>
               </div>
             </div>
             <div className="toolbar-row toolbar-export">
@@ -401,6 +407,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       </div>
 
       {preview && <Preview question={preview} loadPdf={loadPdf} onClose={closePreview} />}
+      {practising && <Practice pool={chosen.length ? chosen : visible} loadPdf={loadPdf} onClose={closePractice} />}
     </>
   );
 }

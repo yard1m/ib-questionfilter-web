@@ -438,3 +438,27 @@ html[data-design="archive"] input[type="checkbox"]:disabled { opacity: .5; curso
 .topic-stats tbody tr:hover { background: var(--accent-soft); }
 html[data-design="archive"] .topic-stats thead th { color: var(--gold); letter-spacing: .1em; text-transform: uppercase; font-size: 9.5px; }
 html[data-design="archive"] .topic-stats .bar { background: var(--gold); }
+
+/* Practice mode */
+.modal.practice { width: min(900px, 100%); }
+.practice-setup { display: grid; gap: 14px; }
+.practice-choices { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.practice-weak h3, .practice-answer h3 { margin: 0 0 6px; font-size: 13px; }
+.practice-weak ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+.practice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.practice-actions.sticky { position: sticky; bottom: -14px; padding: 10px 0; background: var(--card); border-top: 1px solid var(--line); }
+.practice-question { display: grid; gap: 12px; }
+.practice-meta { display: grid; gap: 6px; margin: 0; }
+.practice-answer { border-top: 2px solid var(--accent); padding-top: 10px; }
+.btn.practice-right { background: #2f7a4f; border-color: #2f7a4f; }
+.btn.practice-wrong { background: #b2402f; border-color: #b2402f; }
+.practice-score { font-size: 18px; margin: 0; }
+.practice-score strong { color: var(--accent); font-size: 26px; }
+.practice-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.practice-results li.right span { color: #3f9a64; font-weight: 700; }
+.practice-results li.wrong span { color: #d65343; font-weight: 700; }
+.practice-results li.skipped { color: var(--muted); }
+html[data-design="archive"] .practice-weak h3, html[data-design="archive"] .practice-answer h3 { color: var(--gold); text-transform: uppercase; letter-spacing: .14em; font-size: 10.5px; }
+html[data-design="archive"] input[type="radio"] { accent-color: var(--accent); }
+html[data-design="archive"] .btn.practice-right { background: #2f7a4f; border-color: #3f9a64; color: #f4eadb; }
+html[data-design="archive"] .btn.practice-wrong { background: #9e3526; border-color: #d65343; color: #f4eadb; }
