@@ -30,9 +30,20 @@ export interface TextBox extends TextPoint {
 const SIDE_MARGIN = 38; // hatched answer-margin strip and crop marks sit outside this
 const HEADER_BAND = 62; // running header, page number and crop marks
 const FOOTER_BAND = 50; // barcode, paper code and copyright line
+/**
+ * Older papers (2019-2020) are printed on a larger page with bleed (642 x 889 pt instead of A4's
+ * 595 x 842), with the A4 content centred on it. Every fixed band shifts inward by the bleed.
+ */
+function bleed(page: PageSize): { x: number; y: number } {
+  return { x: Math.max(0, (page.width - 595) / 2), y: Math.max(0, (page.height - 842) / 2) };
+}
+
 const INK = 190; // luminance below this counts as content
 const PAD = 6;
 const BAND_GAP = 9; // points of blank space that separate two bands
+const STRIP_REACH = 45; // how far inside the side margin a hatched strip may sit
+const PAGE_FOOT_CUT = 90; // slice floors below this are the page-foot cut, not a question boundary
+const BARCODE_ZONE = 95; // points above the page foot where the paper barcode is printed
 
 const NOTE_PATTERNS = [
   /^\(?this question continues on the following page\)?\.?$/i,
@@ -45,7 +56,13 @@ const NOTE_PATTERNS = [
   /^do not write solutions on this page\.?$/i,
   /^end of (option [a-d]|section [a-z]|paper)\.?$/i,
   /^option [a-d]\s*[—–-]\s*[a-z ,]+$/i, // "Option C — Energy" section banners
+  /^section [ab]\.?$/i,
+  /^(do not write solutions on this page\.?\s*)?answer all questions in the answer booklet provided\.?( please start each question on a new page\.?)?$/i,
+  /^please start each question on a new page\.?$/i,
 ];
+
+// Rows of dots are printed answer lines: content only when something else is on the page.
+const ANSWER_LINE = /^[.\s…]+$/;
 
 // The boxed notice printed on intentionally blank pages, often split across several text items.
 const BLANK_PAGE_NOTICE = /^please do not write on this page\.?( answers written on this page will not be marked\.?)?$|^answers written on this page will not be marked\.?$/i;
@@ -57,12 +74,20 @@ export function isContinuationNote(text: string): boolean {
 
 /** Returns the content box of a slice, or null when nothing but furniture and blank space is left. */
 export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox[]): Slice | null {
-  const left = Math.max(slice.left ?? 0, SIDE_MARGIN);
-  const right = Math.min(slice.right ?? page.width, page.width - SIDE_MARGIN);
-  const bottom = Math.max(slice.lower, FOOTER_BAND);
-  const top = Math.min(slice.upper, page.height - HEADER_BAND);
+  const left = Math.max(slice.left ?? 0, (SIDE_MARGIN + bleed(page).x));
+  const right = Math.min(slice.right ?? page.width, page.width - (SIDE_MARGIN + bleed(page).x));
+  const bottom = Math.max(slice.lower, (FOOTER_BAND + bleed(page).y));
+  const top = Math.min(slice.upper, page.height - (HEADER_BAND + bleed(page).y));
   if (right - left < 20 || top - bottom < 4) return null;
 
+  // Older papers print the hatched "do not write here" strip further in than (SIDE_MARGIN + bleed(page).x). It shows as a
+  // run of several adjacent columns inked on nearly every row; an answer-box border is only 1-2 pt wide.
+  const strip = hatchedStrip(raster, page, slice, left, right);
+  const l = strip.left, r = strip.right;
+  return trimmed(slice, page, raster, text, l, r, bottom, top);
+}
+
+function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox[], left: number, right: number, bottom: number, top: number): Slice | null {
   // Pixel masks for furniture text: page numbers, paper codes, continuation notes.
   const masked = text.filter((t) => isPageFurniture(t.text) || isContinuationNote(t.text));
   for (const line of textLines(text)) if (line.items.length > 1 && isContinuationNote(line.text)) masked.push(...line.items);
@@ -98,6 +123,17 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
       rowMax[row - r0] = col;
     }
   }
+  // The IB barcode sits centred just above the footer, often closer than BAND_GAP to an answer box,
+  // so it would merge into the box's band. Rows near the page foot whose ink lies only in the centre
+  // strip and carry no text are barcode rows: blank them before banding.
+  const barcodeTop = toRow((BARCODE_ZONE + bleed(page).y));
+  const centre0 = toCol(page.width * 0.3), centre1 = toCol(page.width * 0.7);
+  const textRows = new Set<number>();
+  for (const t of text) for (let row = toRow(t.y + t.height); row <= toRow(t.y); row += 1) textRows.add(row);
+  for (let row = Math.max(r0, barcodeTop); row <= r1; row += 1) {
+    const i = row - r0;
+    if (rowMin[i] >= centre0 && rowMax[i] <= centre1 && !textRows.has(row)) { rowMin[i] = -1; rowMax[i] = -1; }
+  }
   const gapRows = Math.round(BAND_GAP * s);
   const bands: { top: number; bottom: number; minX: number; maxX: number }[] = [];
   let blank = Infinity;
@@ -132,13 +168,62 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
   const inkHeight = (maxY - minY) / s;
   if (inkWidth < 4 && inkHeight < 4) return null; // specks
 
+  const kept = bands.flatMap(bandText);
+  if (kept.length && kept.every((t) => ANSWER_LINE.test(t.text) || isPageFurniture(t.text) || isContinuationNote(t.text))) return null;
+
+  let lower = Math.max(bottom, page.height - maxY / s - PAD);
+  // A slice cut at the page-foot line (~81pt) can clip an answer box's closing edge or a last option
+  // printed lower. When the content runs into the cut, extend down to a wide horizontal rule or to real
+  // text below it, but never to barcodes, crop marks or other furniture.
+  if (slice.lower < (PAGE_FOOT_CUT + bleed(page).y) && slice.lower > (FOOTER_BAND + bleed(page).y) && lower - bottom < 12) {
+    const x0 = toCol(left), x1 = toCol(right), width = x1 - x0 + 1;
+    for (let y = bottom - 1; y >= (FOOTER_BAND + bleed(page).y); y -= 1 / s) {
+      const row = toRow(y), base = row * raster.width;
+      let inked = 0;
+      for (let col = x0; col <= x1; col += 1) if (raster.data[base + col] < INK) inked += 1;
+      if (inked >= width * 0.5) lower = Math.min(lower, y - 2);
+    }
+    for (const t of text) {
+      if (t.y < (FOOTER_BAND + bleed(page).y) || t.y >= bottom || t.x + t.width < left || t.x > right) continue;
+      if (isPageFurniture(t.text) || isContinuationNote(t.text) || ANSWER_LINE.test(t.text)) continue;
+      lower = Math.min(lower, t.y - PAD);
+    }
+  }
+
   return {
     page: slice.page,
     left: Math.max(left, minX / s - PAD),
     right: Math.min(right, maxX / s + PAD),
-    lower: Math.max(bottom, page.height - maxY / s - PAD),
+    lower: Math.max((FOOTER_BAND + bleed(page).y), lower),
     upper: Math.min(top, page.height - minY / s + PAD),
   };
+}
+
+/** Narrows [left, right] to exclude a hatched margin strip printed inside the side margins. */
+function hatchedStrip(raster: GrayRaster, page: PageSize, slice: Slice, left: number, right: number): { left: number; right: number } {
+  const s = raster.scale;
+  const r0 = Math.max(0, Math.round((page.height - Math.min(slice.upper, page.height - (HEADER_BAND + bleed(page).y))) * s));
+  const r1 = Math.min(raster.height - 1, Math.round((page.height - Math.max(slice.lower, (FOOTER_BAND + bleed(page).y))) * s));
+  if (r1 - r0 < 40 * s) return { left, right };
+  const coverage = (col: number) => {
+    let inked = 0;
+    for (let row = r0; row <= r1; row += 1) if (raster.data[row * raster.width + col] < INK) inked += 1;
+    return inked / (r1 - r0 + 1);
+  };
+  const minRun = Math.round(4 * s);
+  const scan = (from: number, to: number, step: number) => {
+    let run = 0;
+    for (let col = from; step > 0 ? col <= to : col >= to; col += step) {
+      if (coverage(col) > 0.6) run += 1;
+      else if (run >= minRun) return col; // first clear column inside the strip
+      else run = 0;
+    }
+    return -1;
+  };
+  const rightEdge = Math.round(right * s), leftEdge = Math.round(left * s), reach = Math.round(STRIP_REACH * s);
+  const rs = scan(rightEdge, rightEdge - reach, -1);
+  const ls = scan(leftEdge, leftEdge + reach, 1);
+  return { left: ls >= 0 ? ls / s + 2 : left, right: rs >= 0 ? rs / s - 2 : right };
 }
 
 /** Groups notice words near each anchor into boxes, padded to cover the printed frame around them. */
