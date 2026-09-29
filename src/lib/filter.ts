@@ -14,6 +14,12 @@ export interface Filters {
   onlySelectedTopics: boolean;
   /** Show only questions that carry every selected topic. */
   requireAllTopics: boolean;
+  /**
+   * Secondary topics: allowed alongside the required ones (`topics`) but never enough on their own.
+   * When any are set, a question must carry at least one required topic and every topic it carries
+   * must be required or secondary; the two modes above are then ignored.
+   */
+  secondaryTopics: Set<string>;
 }
 
 export function defaultFilters(subject: Subject): Filters {
@@ -25,6 +31,7 @@ export function defaultFilters(subject: Subject): Filters {
     topics: new Set(),
     onlySelectedTopics: false,
     requireAllTopics: false,
+    secondaryTopics: new Set(),
   };
 }
 
@@ -46,6 +53,24 @@ export function toggleTopic(topics: Set<string>, topic: string): Set<string> {
   return next;
 }
 
+export type TopicState = 'off' | 'required' | 'secondary';
+
+export function topicState(filters: Filters, topic: string): TopicState {
+  return filters.topics.has(topic) ? 'required' : filters.secondaryTopics.has(topic) ? 'secondary' : 'off';
+}
+
+/** Cycles a topic off -> required -> secondary -> off. */
+export function cycleTopic(filters: Filters, topic: string): Filters {
+  const topics = new Set(filters.topics);
+  const secondaryTopics = new Set(filters.secondaryTopics);
+  const state = topicState(filters, topic);
+  topics.delete(topic);
+  secondaryTopics.delete(topic);
+  if (state === 'off') topics.add(topic);
+  else if (state === 'required') secondaryTopics.add(topic);
+  return { ...filters, topics, secondaryTopics };
+}
+
 /** The two topic modes are mutually exclusive. */
 export function setTopicMode(filters: Filters, mode: 'onlySelectedTopics' | 'requireAllTopics', on: boolean): Filters {
   return {
@@ -57,6 +82,14 @@ export function setTopicMode(filters: Filters, mode: 'onlySelectedTopics' | 'req
 
 export function matchesTopics(question: Question, filters: Filters): boolean {
   const topics = new Set(question.topics);
+  if (filters.secondaryTopics.size > 0) {
+    let hasRequired = false;
+    for (const topic of topics) {
+      if (filters.topics.has(topic)) hasRequired = true;
+      else if (!filters.secondaryTopics.has(topic)) return false;
+    }
+    return hasRequired;
+  }
   if (filters.onlySelectedTopics) {
     for (const topic of topics) if (!filters.topics.has(topic)) return false;
     return true;

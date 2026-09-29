@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCatalog } from './catalog';
 import { fixtureCatalog } from './fixtures';
-import { defaultFilters, filterQuestions, matchesTopics, pruneSelection, setTopicMode, toggleFacet, toggleTopic } from './filter';
+import { cycleTopic, defaultFilters, filterQuestions, matchesTopics, pruneSelection, setTopicMode, toggleFacet, toggleTopic, topicState } from './filter';
 
 const catalog = parseCatalog(fixtureCatalog());
 const physics = catalog.subjects[0];
@@ -74,3 +74,34 @@ describe('filters', () => {
     expect(pruneSelection(unchanged, visible)).toBe(unchanged);
   });
 });
+
+describe('required and secondary topics', () => {
+  const q = (topics: string[]) => ({ topics } as unknown as Parameters<typeof matchesTopics>[0]);
+  const base = defaultFilters({ id: 'x', name: 'X', topics: [], years: [2024], sessions: ['May'], levels: ['HL'], papers: ['1'] } as never);
+
+  it('cycles a topic off -> required -> secondary -> off', () => {
+    let f = cycleTopic(base, 'Rates');
+    expect(topicState(f, 'Rates')).toBe('required');
+    f = cycleTopic(f, 'Rates');
+    expect(topicState(f, 'Rates')).toBe('secondary');
+    expect(f.topics.has('Rates')).toBe(false);
+    f = cycleTopic(f, 'Rates');
+    expect(topicState(f, 'Rates')).toBe('off');
+  });
+
+  it('needs one required topic and allows only required or secondary topics', () => {
+    const f = { ...base, topics: new Set(['Rates']), secondaryTopics: new Set(['The mole']) };
+    expect(matchesTopics(q(['Rates']), f)).toBe(true);
+    expect(matchesTopics(q(['Rates', 'The mole']), f)).toBe(true);
+    expect(matchesTopics(q(['The mole']), f)).toBe(false); // secondary alone is not enough
+    expect(matchesTopics(q(['Rates', 'Equilibrium']), f)).toBe(false); // unpicked topic
+    expect(matchesTopics(q([]), f)).toBe(false);
+  });
+
+  it('matches nothing when only secondary topics are set, and ignores the old modes while active', () => {
+    expect(matchesTopics(q(['The mole']), { ...base, secondaryTopics: new Set(['The mole']) })).toBe(false);
+    const f = { ...base, topics: new Set(['Rates', 'Kinetics']), secondaryTopics: new Set(['The mole']), requireAllTopics: true };
+    expect(matchesTopics(q(['Rates', 'The mole']), f)).toBe(true);
+  });
+});
+

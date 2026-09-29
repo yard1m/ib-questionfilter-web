@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import {
-  defaultFilters, filterQuestions, pruneSelection, setTopicMode, toggleFacet, toggleTopic, type Filters,
+  cycleTopic, defaultFilters, filterQuestions, pruneSelection, setTopicMode, toggleFacet, topicState, type Filters, type TopicState,
 } from '../lib/filter';
 import type { DesignMode } from '../lib/design';
 import { DesignToggle } from './DesignToggle';
@@ -18,6 +18,20 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
       <input type="checkbox" checked={checked} onChange={onChange} />
       <span>{label}</span>
     </label>
+  );
+}
+
+const TOPIC_STATE_LABEL: Record<TopicState, string> = { off: 'not selected', required: 'required', secondary: 'also allowed' };
+
+/** A topic row that cycles off -> required -> secondary (also allowed) -> off. */
+function TopicRow({ label, state, onCycle }: { label: string; state: TopicState; onCycle: () => void }) {
+  return (
+    <button type="button" className={`topic-row ${state}`} onClick={onCycle}
+      aria-label={`${label}: ${TOPIC_STATE_LABEL[state]}. Click to change.`}>
+      <span className="topic-mark" aria-hidden="true">{state === 'required' ? '✓' : state === 'secondary' ? '+' : ''}</span>
+      <span className="topic-name">{label}</span>
+      {state !== 'off' && <span className="topic-badge">{state === 'required' ? 'Required' : 'Also allowed'}</span>}
+    </button>
   );
 }
 
@@ -261,24 +275,28 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
             <fieldset>
               <legend>
                 Topics
-                {filters.topics.size > 0 && (
-                  <button type="button" className="link" onClick={() => update({ ...filters, topics: new Set() })}>Clear</button>
+                {(filters.topics.size > 0 || filters.secondaryTopics.size > 0) && (
+                  <button type="button" className="link" onClick={() => update({ ...filters, topics: new Set(), secondaryTopics: new Set() })}>Clear</button>
                 )}
               </legend>
+              <p className="muted small topic-help">
+                Click a topic once for <strong>required</strong>, twice for <strong>also allowed</strong>.
+                With any “also allowed” topic set, questions need at least one required topic and no topics outside your picks.
+              </p>
               <label className="check switch">
-                <input type="checkbox" checked={filters.requireAllTopics}
+                <input type="checkbox" checked={filters.requireAllTopics} disabled={filters.secondaryTopics.size > 0}
                   onChange={(e) => update(setTopicMode(filters, 'requireAllTopics', e.target.checked))} />
                 <span>Require every selected topic</span>
               </label>
               <label className="check switch">
-                <input type="checkbox" checked={filters.onlySelectedTopics}
+                <input type="checkbox" checked={filters.onlySelectedTopics} disabled={filters.secondaryTopics.size > 0}
                   onChange={(e) => update(setTopicMode(filters, 'onlySelectedTopics', e.target.checked))} />
                 <span>Only selected topics <small>Exclude questions with unselected extra topics.</small></span>
               </label>
               <div className="topics">
                 {subject.topics.map((topic) => (
-                  <ToggleRow key={topic} label={topic} checked={filters.topics.has(topic)}
-                    onChange={() => update({ ...filters, topics: toggleTopic(filters.topics, topic) })} />
+                  <TopicRow key={topic} label={topic} state={topicState(filters, topic)}
+                    onCycle={() => update(cycleTopic(filters, topic))} />
                 ))}
               </div>
             </fieldset>
@@ -369,7 +387,9 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
             <div className="panel empty">
               <p><strong>No matching questions</strong></p>
               <p className="muted">
-                {filters.onlySelectedTopics && filters.topics.size === 0
+                {filters.secondaryTopics.size > 0 && filters.topics.size === 0
+                  ? '“Also allowed” topics need at least one required topic.'
+                  : filters.onlySelectedTopics && filters.topics.size === 0
                   ? '"Only selected topics" needs at least one selected topic.'
                   : 'Adjust the selected filters to see more questions.'}
               </p>

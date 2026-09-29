@@ -462,3 +462,19 @@ html[data-design="archive"] .practice-weak h3, html[data-design="archive"] .prac
 html[data-design="archive"] input[type="radio"] { accent-color: var(--accent); }
 html[data-design="archive"] .btn.practice-right { background: #2f7a4f; border-color: #3f9a64; color: #f4eadb; }
 html[data-design="archive"] .btn.practice-wrong { background: #9e3526; border-color: #d65343; color: #f4eadb; }
+
+/* Three-state topic rows: off -> required -> also allowed */
+.topic-help { margin: 0 0 6px; line-height: 1.4; }
+.topic-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px;
+  padding: 3px 4px; font: inherit; font-size: 13.5px; color: inherit; cursor: pointer; }
+.topic-row:hover { background: var(--accent-soft); }
+.topic-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.topic-mark { flex: none; width: 15px; height: 15px; border: 1.5px solid var(--muted); border-radius: 4px; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; line-height: 1; }
+.topic-name { flex: 1; }
+.topic-badge { flex: none; font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 5px; }
+.topic-row.required .topic-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
+.topic-row.required .topic-badge { background: var(--accent); color: #fff; }
+.topic-row.secondary .topic-mark { border-style: dashed; border-color: var(--accent); color: var(--accent); }
+.topic-row.secondary .topic-badge { background: var(--accent-soft); color: var(--accent); }
+.check input:disabled, .check input:disabled + span { opacity: 0.45; cursor: not-allowed; }
