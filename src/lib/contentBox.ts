@@ -39,6 +39,12 @@ const NOTE_PATTERNS = [
   /^\(?question \d+ continued\)?\.?$/i,
   /^\(?this question continues on page \d+\)?\.?$/i,
   /^\(?continued\s*(\.{2,}|…)?\)?$/i, // markscheme "(continued…)" notes
+  /^\(?(option [a-d],? )?(question \d+[a-z]*(\([a-z]+\))*,? )?continued\s*(\.{2,}|…)?\)?\.?$/i, // "(Option A, question 5 continued)", "(Question 13c continued)", "(Question continued)"
+  /^\(?question continued\)?\.?$/i,
+  /^\(?option [a-d] continues on (the following page|page \d+)\)?\.?$/i,
+  /^do not write solutions on this page\.?$/i,
+  /^end of (option [a-d]|section [a-z]|paper)\.?$/i,
+  /^option [a-d]\s*[—–-]\s*[a-z ,]+$/i, // "Option C — Energy" section banners
 ];
 
 // The boxed notice printed on intentionally blank pages, often split across several text items.
@@ -59,6 +65,7 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
 
   // Pixel masks for furniture text: page numbers, paper codes, continuation notes.
   const masked = text.filter((t) => isPageFurniture(t.text) || isContinuationNote(t.text));
+  for (const line of textLines(text)) if (line.items.length > 1 && isContinuationNote(line.text)) masked.push(...line.items);
   const s = raster.scale;
   const toCol = (x: number) => Math.min(raster.width - 1, Math.max(0, Math.round(x * s)));
   const toRow = (y: number) => Math.min(raster.height - 1, Math.max(0, Math.round((page.height - y) * s)));
@@ -112,7 +119,7 @@ export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, tex
   const isFurnitureBand = (b: { top: number; bottom: number; minX: number; maxX: number }) => {
     const items = bandText(b);
     const heightPt = (b.bottom - b.top) / s, widthPt = (b.maxX - b.minX) / s;
-    if (!items.length) return heightPt < 22 && widthPt < page.width * 0.4; // barcode or stray mark
+    if (!items.length) return heightPt < 40 && widthPt < page.width * 0.45; // barcode, stray mark or rule
     const line = items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
     return isContinuationNote(line) || BLANK_PAGE_NOTICE.test(line) || items.every((t) => isPageFurniture(t.text) || isContinuationNote(t.text));
   };
@@ -146,4 +153,18 @@ function clusterNotice(text: TextBox[], anchors: TextBox[]): [number, number, nu
     rects.push([x0 - 30, y0 - 22, x1 + 30, y1 + 22]);
   }
   return rects;
+}
+
+/** Groups text items that share a baseline into lines, left to right. */
+export function textLines(text: TextBox[]): { text: string; items: TextBox[] }[] {
+  const sorted = text.slice().sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: TextBox[][] = [];
+  for (const t of sorted) {
+    const line = lines.find((l) => Math.abs(l[0].y - t.y) < 3);
+    if (line) line.push(t); else lines.push([t]);
+  }
+  return lines.map((items) => {
+    items.sort((a, b) => a.x - b.x);
+    return { text: items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim(), items };
+  });
 }

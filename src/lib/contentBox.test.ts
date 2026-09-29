@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contentBox, isContinuationNote, type GrayRaster } from './contentBox';
+import { contentBox, isContinuationNote, textLines, type GrayRaster } from './contentBox';
 
 const PAGE = { width: 595, height: 842 };
 /** A white page raster at 1 px/pt with black rectangles given in displayed points (origin bottom-left). */
@@ -17,6 +17,10 @@ describe('clean-layout content box', () => {
     expect(isContinuationNote('(This question continues on the following page)')).toBe(true);
     expect(isContinuationNote('(Question 1 continued)')).toBe(true);
     expect(isContinuationNote('(a) State why the temperature')).toBe(false);
+    for (const note of ['(Option A continues on the following page)', '(Option B continues on page 23)', '(Option A, question 5 continued)',
+      '(Option D continued)', '(Question 13c continued)', '(Question continued)', 'Do not write solutions on this page', 'End of Option B',
+      'Option C — Energy', '(continued...)']) expect(isContinuationNote(note), note).toBe(true);
+    for (const text of ['Which option continues the reaction?', 'D. continued heating', 'Option A is correct because']) expect(isContinuationNote(text), text).toBe(false);
   });
 
   it('trims the hatched margin, header band, barcode and trailing blank space', () => {
@@ -42,5 +46,14 @@ describe('clean-layout content box', () => {
       { x: 314, y: 440, width: 80, height: 9, text: 'write on this page.' }, { x: 220, y: 420, width: 170, height: 9, text: 'Answers written on this page' },
       { x: 250, y: 408, width: 110, height: 9, text: 'will not be marked.' }];
     expect(contentBox(whole, PAGE, blank, notice)).toBeNull();
+  });
+});
+
+describe('textLines', () => {
+  it('joins split text items on one baseline so split notes are recognised', () => {
+    const box = (text: string, x: number, y: number) => ({ text, x, y, width: 40, height: 10 });
+    const lines = textLines([box('on the following page)', 200, 100), box('(Option A continues', 80, 101), box('(b) Explain', 80, 300)]);
+    expect(lines.map((l) => l.text)).toEqual(['(b) Explain', '(Option A continues on the following page)']);
+    expect(isContinuationNote(lines[1].text)).toBe(true);
   });
 });
