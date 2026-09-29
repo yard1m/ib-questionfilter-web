@@ -50,7 +50,7 @@ const NOTE_PATTERNS = [
   /^\(?this question continues on the following page\)?\.?$/i,
   /^\(?question \d+ continued\)?\.?$/i,
   /^\(?this question continues on page \d+\)?\.?$/i,
-  /^\(?continued\s*(\.{2,}|…)?\)?$/i, // markscheme "(continued…)" notes
+  /^\(?continue[ds]\s*(\.{2,}|…)?\)?$/i, // markscheme "(continued…)" / "(continues…)" notes
   /^\(?(option [a-d],? )?(question \d+[a-z]*(\([a-z]+\))*,? )?continued\s*(\.{2,}|…)?\)?\.?$/i, // "(Option A, question 5 continued)", "(Question 13c continued)", "(Question continued)"
   /^\(?question continued\)?\.?$/i,
   /^\(?option [a-d] continues on (the following page|page \d+)\)?\.?$/i,
@@ -69,7 +69,8 @@ const ANSWER_LINE = /^[.\s…]+$/;
 const BLANK_PAGE_NOTICE = /^please do not write on this page\.?( answers written on this page will not be marked\.?)?$|^answers written on this page will not be marked\.?$/i;
 
 export function isContinuationNote(text: string): boolean {
-  const t = text.trim();
+  // pdf.js often splits "(" or ")" into their own items, so a joined line reads "( Question 8 continued )".
+  const t = text.trim().replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\s+/g, ' ');
   return NOTE_PATTERNS.some((p) => p.test(t));
 }
 
@@ -152,7 +153,7 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
   const isFurnitureBand = (b: { top: number; bottom: number; minX: number; maxX: number }) => {
     const items = bandText(b);
     const heightPt = (b.bottom - b.top) / s, widthPt = (b.maxX - b.minX) / s;
-    if (!items.length) return heightPt < 40 && widthPt < page.width * 0.45; // barcode, stray mark or rule
+    if (!items.length) return heightPt < 3 || (heightPt < 40 && widthPt < page.width * 0.45); // thin rule, barcode or stray mark
     const line = items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
     return isContinuationNote(line) || BLANK_PAGE_NOTICE.test(line) || items.every((t) => isPageFurniture(t.text) || isContinuationNote(t.text));
   };

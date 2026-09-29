@@ -19,7 +19,7 @@ describe('clean-layout content box', () => {
     expect(isContinuationNote('(a) State why the temperature')).toBe(false);
     for (const note of ['(Option A continues on the following page)', '(Option B continues on page 23)', '(Option A, question 5 continued)',
       '(Option D continued)', '(Question 13c continued)', '(Question continued)', 'Do not write solutions on this page', 'End of Option B',
-      'Option C — Energy', '(continued...)']) expect(isContinuationNote(note), note).toBe(true);
+      'Option C — Energy', '(continued...)', '( Question 8 continued )', '(continues…)']) expect(isContinuationNote(note), note).toBe(true);
     for (const text of ['Which option continues the reaction?', 'D. continued heating', 'Option A is correct because']) expect(isContinuationNote(text), text).toBe(false);
   });
 
@@ -63,6 +63,11 @@ describe('clean-layout content box', () => {
     const r = raster([[100, 500, 480, 700], [60, 84, 535, 86], [60, 68, 330, 79]]);
     const note = [{ x: 60, y: 68, width: 270, height: 0, text: '(This question continues on the following page)' }];
     expect(contentBox(whole, PAGE, r, note)!.lower).toBeGreaterThanOrEqual(79); // note ink ends at 79
+  });
+
+  it('drops an isolated thin source rule under the last option', () => {
+    const r = raster([[100, 500, 480, 700], [60, 420, 535, 421]]);
+    expect(contentBox(whole, PAGE, r, [{ x: 100, y: 690, width: 200, height: 10, text: 'D. Bromine' }])!.lower).toBeGreaterThan(480);
   });
 
   it('drops a trailing continuation note and returns null for a notice-only slice', () => {
