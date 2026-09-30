@@ -6,17 +6,21 @@ import { clearProgress, loadProgress, pickSet, record, saveProgress, topicsOf, w
 type LoadPdf = (key: string) => Promise<Uint8Array>;
 
 /** Renders the given slices of one PDF into a host element (question or markscheme). */
-function Slices({ pdfKey, slices, loadPdf, label }: { pdfKey: string; slices: Slice[]; loadPdf: LoadPdf; label: string }) {
+function Slices({ pdfKey, slices, loadPdf, label, onReadyChange }: { pdfKey: string; slices: Slice[]; loadPdf: LoadPdf; label: string; onReadyChange: (ready: boolean) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   useEffect(() => {
     let cancelled = false;
     let destroy: (() => void) | null = null;
+    host.current?.replaceChildren();
     setState('loading');
+    onReadyChange(false);
     (async () => {
       try {
         const { openForRendering, renderSlice } = await import('../lib/render');
-        const opened = openForRendering(await loadPdf(pdfKey));
+        const bytes = await loadPdf(pdfKey);
+        if (cancelled) return;
+        const opened = openForRendering(bytes);
         destroy = () => { void opened.destroy(); };
         const doc = await opened.promise;
         const target = host.current;
@@ -30,14 +34,19 @@ function Slices({ pdfKey, slices, loadPdf, label }: { pdfKey: string; slices: Sl
           canvas.setAttribute('role', 'img');
           canvas.setAttribute('aria-label', label);
           target.appendChild(canvas);
-          setState('ready'); // hide the loading note as soon as the first page is on screen
         }
+        setState('ready');
+        onReadyChange(slices.length > 0);
       } catch {
-        if (!cancelled) setState('error');
+        if (!cancelled) {
+          host.current?.replaceChildren();
+          setState('error');
+          onReadyChange(false);
+        }
       }
     })();
     return () => { cancelled = true; destroy?.(); };
-  }, [pdfKey, slices, loadPdf, label]);
+  }, [pdfKey, slices, loadPdf, label, onReadyChange]);
   return (
     <>
       {state === 'loading' && <p className="muted" role="status">Loading…</p>}
@@ -60,6 +69,8 @@ export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf
   const [set, setSet] = useState<Question[] | null>(null);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [questionReady, setQuestionReady] = useState(false);
+  const [answerReady, setAnswerReady] = useState(false);
   const [results, setResults] = useState<{ question: Question; correct: boolean | null }[]>([]);
   const closeButton = useRef<HTMLButtonElement>(null);
 
@@ -73,10 +84,11 @@ export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf
   const weakest = useMemo(() => weakestTopics(progress, 5), [progress]);
   const start = () => {
     setSet(pickSet(pool, Math.min(count, pool.length), progress, mode));
-    setIndex(0); setRevealed(false); setResults([]);
+    setIndex(0); setRevealed(false); setResults([]); setQuestionReady(false); setAnswerReady(false);
   };
   const answer = (correct: boolean | null) => {
     if (!set) return;
+    if (correct !== null && (!questionReady || !answerReady)) return;
     const question = set[index];
     if (correct !== null) {
       const next = record(progress, question, correct);
@@ -86,6 +98,8 @@ export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf
     setResults((r) => [...r, { question, correct }]);
     setIndex((i) => i + 1);
     setRevealed(false);
+    setQuestionReady(false);
+    setAnswerReady(false);
   };
   const reset = () => {
     if (!window.confirm('Clear all practice history saved in this browser?')) return;
@@ -151,21 +165,21 @@ export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf
               <strong>{questionTitle(current)}</strong>
               <span className="qtopics">{topicsOf(current).map((t) => <span key={t} className="tag">{t}</span>)}</span>
             </p>
-            <Slices pdfKey={current.document.paperKey} slices={current.questionSlices} loadPdf={loadPdf} label={`${current.label} question`} />
+            <Slices key={current.id} pdfKey={current.document.paperKey} slices={current.questionSlices} loadPdf={loadPdf} label={`${current.label} question`} onReadyChange={setQuestionReady} />
             {revealed && (
               <div className="practice-answer">
                 <h3>Markscheme</h3>
                 {current.answerSlices && current.document.markschemeKey
-                  ? <Slices pdfKey={current.document.markschemeKey} slices={current.answerSlices} loadPdf={loadPdf} label={`${current.label} markscheme`} />
+                  ? <Slices key={current.id} pdfKey={current.document.markschemeKey} slices={current.answerSlices} loadPdf={loadPdf} label={`${current.label} markscheme`} onReadyChange={setAnswerReady} />
                   : <p className="muted">{current.answerSkipReason ?? 'No markscheme answer is available for this question.'}</p>}
               </div>
             )}
             <div className="practice-actions sticky">
               {!revealed
-                ? <button type="button" className="btn" onClick={() => setRevealed(true)}>Show markscheme</button>
+                ? <button type="button" className="btn" disabled={!questionReady} onClick={() => setRevealed(true)}>Show markscheme</button>
                 : <>
-                    <button type="button" className="btn practice-right" onClick={() => answer(true)}>Got it</button>
-                    <button type="button" className="btn practice-wrong" onClick={() => answer(false)}>Missed it</button>
+                    <button type="button" className="btn practice-right" disabled={!questionReady || !answerReady} onClick={() => answer(true)}>Got it</button>
+                    <button type="button" className="btn practice-wrong" disabled={!questionReady || !answerReady} onClick={() => answer(false)}>Missed it</button>
                   </>}
               <button type="button" className="btn secondary" onClick={() => answer(null)}>Skip</button>
             </div>

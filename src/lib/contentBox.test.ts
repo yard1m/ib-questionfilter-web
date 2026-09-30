@@ -13,6 +13,21 @@ function raster(rects: [number, number, number, number][]): GrayRaster {
 const whole = { page: 0, lower: 0, upper: 842, left: null, right: null };
 
 describe('clean-layout content box', () => {
+  it('keeps real answer text below the usual footer floor without keeping the barcode', () => {
+    const r = raster([[100, 500, 480, 700], [100, 37, 480, 47], [250, 15, 340, 28]]);
+    const box = contentBox({ ...whole, lower: 33.652 }, PAGE, r,
+      [{ x: 100, y: 37, width: 380, height: 10, text: 'London dispersion forces are weak' }])!;
+    expect(box.lower).toBeLessThanOrEqual(37);
+    expect(box.lower).toBeGreaterThan(28);
+  });
+
+  it('retains small diagram-only bands away from the footer', () => {
+    const r = raster([[100, 500, 480, 700], [250, 200, 310, 225], [250, 735, 310, 760]]);
+    const box = contentBox(whole, PAGE, r, [])!;
+    expect(box.lower).toBeLessThanOrEqual(200);
+    expect(box.upper).toBeGreaterThanOrEqual(760);
+  });
+
   it('recognises continuation notes', () => {
     expect(isContinuationNote('(This question continues on the following page)')).toBe(true);
     expect(isContinuationNote('(Question 1 continued)')).toBe(true);
@@ -131,4 +146,3 @@ describe('extra-wide markscheme pages (1195 x 595 pt)', () => {
     expect(box.left).toBeLessThan(46);
   });
 });
-

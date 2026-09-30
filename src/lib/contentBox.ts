@@ -82,7 +82,13 @@ export function isContinuationNote(text: string): boolean {
 export function contentBox(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox[]): Slice | null {
   const left = Math.max(slice.left ?? 0, (SIDE_MARGIN + bleed(page).x));
   const right = Math.min(slice.right ?? page.width, page.width - (SIDE_MARGIN + bleed(page).x));
-  const bottom = Math.max(slice.lower, (FOOTER_BAND + bleed(page).y));
+  const footer = FOOTER_BAND + bleed(page).y;
+  // The footer band is a default, not a content boundary: some landscape markschemes print
+  // valid marking lines below it. Keep those lines within the catalog slice, not footer furniture.
+  const lowText = text.filter((t) => t.y < footer && t.y + t.height > slice.lower && t.y < slice.upper
+    && t.x + t.width >= left && t.x <= right
+    && !isPageFurniture(t.text) && !isContinuationNote(t.text) && !ANSWER_LINE.test(t.text));
+  const bottom = Math.max(slice.lower, Math.min(footer, ...lowText.map((t) => t.y - PAD)));
   const top = Math.min(slice.upper, page.height - (HEADER_BAND + bleed(page).y));
   if (right - left < 20 || top - bottom < 4) return null;
 
@@ -148,8 +154,8 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
     } else bands.push({ top: row, bottom: row, minX: rowMin[i], maxX: rowMax[i] });
     blank = 0;
   }
-  // Drop leading and trailing bands that hold only furniture: a barcode (ink but no text, short
-  // and narrow) or text that is all page furniture or continuation notes.
+  // Textless size alone cannot distinguish a diagram from furniture. Barcode rows were removed
+  // in the page-foot zone above; only isolated wide, thin rules can be discarded elsewhere.
   const bandText = (b: { top: number; bottom: number }) => {
     const yTop = page.height - b.top / s + 2, yBottom = page.height - b.bottom / s - 2;
     return text.filter((t) => t.y <= yTop && t.y + t.height >= yBottom && t.x + t.width >= left && t.x <= right);
@@ -157,7 +163,7 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
   const isFurnitureBand = (b: { top: number; bottom: number; minX: number; maxX: number }) => {
     const items = bandText(b);
     const heightPt = (b.bottom - b.top) / s, widthPt = (b.maxX - b.minX) / s;
-    if (!items.length) return heightPt < 3 || (heightPt < 40 && widthPt < page.width * 0.45); // thin rule, barcode or stray mark
+    if (!items.length) return heightPt < 3 && widthPt > page.width * 0.45;
     const line = items.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
     return isContinuationNote(line) || BLANK_PAGE_NOTICE.test(line) || items.every((t) => isPageFurniture(t.text) || isContinuationNote(t.text));
   };
@@ -205,7 +211,7 @@ function trimmed(slice: Slice, page: PageSize, raster: GrayRaster, text: TextBox
     page: slice.page,
     left: Math.max(left, minX / s - PAD),
     right: Math.min(right, maxX / s + PAD),
-    lower: Math.max((FOOTER_BAND + bleed(page).y), lower),
+    lower: Math.max(Math.min(bottom, FOOTER_BAND + bleed(page).y), lower),
     upper,
   };
 }

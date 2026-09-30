@@ -170,8 +170,8 @@ export function App({ config, localSourceFactory }: {
   const signOut = useCallback(async () => {
     cache.clear();
     setCatalogState({ status: 'idle' });
-    if (client) await client.auth.signOut();
-  }, [client, cache]);
+    if (client) await client.auth.signOut({ scope: access === 'replaced' ? 'local' : 'global' });
+  }, [client, cache, access]);
 
   // supabase-js only sends an RPC once it is awaited or then-ed; a bare `void client.rpc(...)` never
   // leaves the browser, which is why no activity was ever recorded before 2026-09-29.

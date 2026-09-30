@@ -32,13 +32,34 @@ export interface ExportResult {
   skipped: { question: Question; reason: string }[];
 }
 
-async function openSource(load: LoadPdf, key: string, cache: Map<string, Promise<PDFDocument>>) {
+/** Reject pending library/callback work promptly without leaving abort listeners attached. */
+async function abortable<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+  signal?.throwIfAborted();
+  if (!signal) return work();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(
+      (value) => { signal.removeEventListener('abort', abort); signal.aborted ? reject(signal.reason) : resolve(value); },
+      (error) => { signal.removeEventListener('abort', abort); reject(error); },
+    );
+  });
+}
+
+// Cached PDFs and content callbacks can resolve entirely in microtasks. Yield so a UI Cancel
+// click can run even then, before continuing the next slice or decoration page.
+async function checkpoint(signal?: AbortSignal): Promise<void> {
+  if (signal) await abortable(signal, () => new Promise((resolve) => setTimeout(resolve, 0)));
+}
+
+async function openSource(load: LoadPdf, key: string, cache: Map<string, Promise<PDFDocument>>, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   let doc = cache.get(key);
   if (!doc) {
-    doc = load(key).then((bytes) => PDFDocument.load(bytes, { ignoreEncryption: true, throwOnInvalidObject: false, updateMetadata: false }));
+    doc = abortable(signal, () => load(key)).then((bytes) => abortable(signal, () => PDFDocument.load(bytes, { ignoreEncryption: true, throwOnInvalidObject: false, updateMetadata: false })));
     cache.set(key, doc);
   }
-  return doc;
+  return abortable(signal, () => doc!);
 }
 
 async function embedRegion(out: PDFDocument, page: PDFPage, region: Rect) {
@@ -51,11 +72,13 @@ async function embedRegion(out: PDFDocument, page: PDFPage, region: Rect) {
  * Prints a small line naming the account and date at the foot of every page, so a PDF that
  * leaves the group still says whose account exported it. Empty stamps are skipped.
  */
-export async function stampPages(out: PDFDocument, stamp: string | undefined): Promise<void> {
+export async function stampPages(out: PDFDocument, stamp: string | undefined, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const text = (stamp ?? '').trim();
   if (!text) return;
-  const font = await out.embedFont(StandardFonts.Helvetica);
+  const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
   for (const page of out.getPages()) {
+    await checkpoint(signal);
     const { width } = page.getSize();
     const size = Math.max(4.5, Math.min(7, width / 110));
     page.drawText(text, { x: 4, y: 3, size, font, color: rgb(0.45, 0.45, 0.45), opacity: 0.85, maxWidth: width - 8 });
@@ -67,26 +90,32 @@ function pageBox(page: PDFPage): PageBox {
   return { x: media.x, y: media.y, width: media.width, height: media.height, rotation: normaliseRotation(page.getRotation().angle) };
 }
 
-async function contentSlices<T extends Question['questionSlices'][number]>(slices: T[], key: string, hasContent?: HasContent): Promise<T[]> {
+async function contentSlices<T extends Question['questionSlices'][number]>(slices: T[], key: string, hasContent?: HasContent, signal?: AbortSignal): Promise<T[]> {
+  signal?.throwIfAborted();
   if (!hasContent) return slices;
   const kept: T[] = [];
-  for (const slice of slices) if (await hasContent(key, slice)) kept.push(slice);
+  for (const slice of slices) {
+    await checkpoint(signal);
+    if (await abortable(signal, () => hasContent(key, slice, signal))) kept.push(slice);
+  }
   return kept.length ? kept : slices.slice(0, 1);
 }
 
-export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent): Promise<ExportResult> {
-  const out = await PDFDocument.create();
+export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, signal?: AbortSignal): Promise<ExportResult> {
+  const out = await abortable(signal, () => PDFDocument.create());
   out.setTitle(title);
   out.setCreator('IB Question Filter');
   const sources = new Map<string, Promise<PDFDocument>>();
   for (const question of questions) {
-    const source = await openSource(load, question.document.paperKey, sources);
-    for (const slice of await contentSlices(question.questionSlices, question.document.paperKey, hasContent)) {
+    await checkpoint(signal);
+    const source = await openSource(load, question.document.paperKey, sources, signal);
+    for (const slice of await contentSlices(question.questionSlices, question.document.paperKey, hasContent, signal)) {
+      await checkpoint(signal);
       const page = source.getPage(slice.page);
       const box = pageBox(page);
       const shown: Rect = displayedRect(box, { ...slice, left: null, right: null });
       const region = userRect(box, shown);
-      const embedded = await embedRegion(out, page, region);
+      const embedded = await abortable(signal, () => embedRegion(out, page, region));
       const width = shown.right - shown.left;
       const height = shown.top - shown.bottom;
       const target = out.addPage([width, height]);
@@ -94,12 +123,12 @@ export async function exportQuestions(questions: Question[], load: LoadPdf, titl
       if (embedded) target.drawPage(embedded, { x: p.x, y: p.y, xScale: 1, yScale: 1, rotate: degrees(p.rotate) });
     }
   }
-  await stampPages(out, stamp);
-  return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
+  await stampPages(out, stamp, signal);
+  return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
-export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, contentBox?: ContentBox): Promise<ExportResult> {
-  const out = await PDFDocument.create();
+export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, contentBox?: ContentBox, signal?: AbortSignal): Promise<ExportResult> {
+  const out = await abortable(signal, () => PDFDocument.create());
   out.setTitle(title);
   out.setCreator('IB Question Filter');
   const sources = new Map<string, Promise<PDFDocument>>();
@@ -111,23 +140,26 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
   const contentHeight = OUTPUT_PAGE_HEIGHT - 2 * OUTPUT_MARGIN;
 
   for (const question of questions) {
+    await checkpoint(signal);
     if (!question.answerSlices || !question.document.markschemeKey) {
       skipped.push({ question, reason: question.answerSkipReason ?? 'No answer slice is available for this question.' });
       continue;
     }
-    const source = await openSource(load, question.document.markschemeKey, sources);
+    const source = await openSource(load, question.document.markschemeKey, sources, signal);
     const seen = new Set<string>();
     // Clean layout: trim each answer crop to its content (drops markscheme headers, footers and blank space).
-    let answerSlices: Slice[] = await contentSlices(question.answerSlices, question.document.markschemeKey, hasContent);
+    let answerSlices: Slice[] = await contentSlices(question.answerSlices, question.document.markschemeKey, hasContent, signal);
     if (contentBox) {
       const trimmed: Slice[] = [];
       for (const slice of answerSlices) {
-        const box = await contentBox(question.document.markschemeKey, slice);
+        await checkpoint(signal);
+        const box = await abortable(signal, () => contentBox(question.document.markschemeKey!, slice, signal));
         if (box) trimmed.push(box);
       }
       if (trimmed.length) answerSlices = trimmed;
     }
     for (const slice of answerSlices) {
+      await checkpoint(signal);
       const identity = [slice.page, slice.lower.toFixed(1), slice.upper.toFixed(1), (slice.left ?? 0).toFixed(1), (slice.right ?? 0).toFixed(1)].join(':');
       if (seen.has(identity)) continue;
       seen.add(identity);
@@ -144,7 +176,7 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
         cursor = OUTPUT_PAGE_HEIGHT - OUTPUT_MARGIN;
       }
       const region = userRect(box, shown);
-      const embedded = await embedRegion(out, page, region);
+      const embedded = await abortable(signal, () => embedRegion(out, page, region));
       const y = cursor - displayHeight;
       const p = placement(box, region, OUTPUT_MARGIN, y, scale);
       if (embedded) current.drawPage(embedded, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate) });
@@ -154,10 +186,11 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
   }
 
   if (skipped.length) {
-    const font = await out.embedFont(StandardFonts.Helvetica);
-    const bold = await out.embedFont(StandardFonts.HelveticaBold);
+    const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
+    const bold = await abortable(signal, () => out.embedFont(StandardFonts.HelveticaBold));
     const lines = skipped.map(({ question, reason }) => `${question.document.name} ${question.label}: ${reason}`);
     for (let start = 0; start < lines.length; start += 34) {
+      await checkpoint(signal);
       const page = out.addPage([612, 792]);
       let y = 736;
       if (start === 0) {
@@ -170,8 +203,8 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
       }
     }
   }
-  await stampPages(out, stamp);
-  return { bytes: await out.save(), pages: out.getPageCount(), exported, skipped };
+  await stampPages(out, stamp, signal);
+  return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported, skipped };
 }
 
 function clip(text: string, font: { widthOfTextAtSize(t: string, s: number): number }, size: number, maxWidth: number): string {
@@ -206,6 +239,8 @@ const INK = rgb(0.086, 0.098, 0.114);
 
 export interface CleanOptions {
   subject: string;
+  /** Cooperative cancellation, including content checks, embedding, decoration and saving. */
+  signal?: AbortSignal;
   /** Admin format: no watermark and no sharing stamp (labels and page numbers stay). */
   admin?: boolean;
   /** Printed as a small clickable link in the footer of watermarked exports. */
@@ -216,9 +251,10 @@ export interface CleanOptions {
 }
 
 export async function exportQuestionsClean(questions: Question[], load: LoadPdf, title: string, options: CleanOptions): Promise<ExportResult> {
-  const out = await PDFDocument.create();
-  const font = await out.embedFont(StandardFonts.Helvetica);
-  const bold = await out.embedFont(StandardFonts.HelveticaBold);
+  const { signal } = options;
+  const out = await abortable(signal, () => PDFDocument.create());
+  const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
+  const bold = await abortable(signal, () => out.embedFont(StandardFonts.HelveticaBold));
   const sources = new Map<string, Promise<PDFDocument>>();
   const contentWidth = A4_W - 2 * CLEAN_MARGIN_X;
   const contentHeight = CLEAN_TOP - CLEAN_BOTTOM;
@@ -231,16 +267,19 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
   };
 
   for (const question of questions) {
+    await checkpoint(signal);
     const key = question.document.paperKey;
-    const source = await openSource(load, key, sources);
+    const source = await openSource(load, key, sources, signal);
     const boxes: Slice[] = [];
     for (const slice of question.questionSlices) {
-      const trimmed = options.contentBox ? await options.contentBox(key, slice) : slice;
+      await checkpoint(signal);
+      const trimmed = options.contentBox ? await abortable(signal, () => options.contentBox!(key, slice, signal)) : slice;
       if (trimmed) boxes.push(trimmed);
     }
     if (!boxes.length) boxes.push(question.questionSlices[0]); // never drop a question
     let first = true;
     for (const slice of boxes) {
+      await checkpoint(signal);
       const src = source.getPage(slice.page);
       const box = pageBox(src);
       const shown = displayedRect(box, slice);
@@ -262,7 +301,7 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
         cursor -= 8;
       }
       const region = userRect(box, shown);
-      const embedded = await embedRegion(out, src, region);
+      const embedded = await abortable(signal, () => embedRegion(out, src, region));
       const y = cursor - height * scale;
       const p = placement(box, region, CLEAN_MARGIN_X, y, scale);
       target.drawPage(embedded, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate) });
@@ -270,20 +309,21 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
       first = false;
     }
   }
-  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, admin: options.admin, siteUrl: options.siteUrl, font, bold });
-  return { bytes: await out.save(), pages: out.getPageCount(), exported: questions.length, skipped: [] };
+  await decoratePages(out, { ...options, title, font, bold });
+  return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
 /** Re-opens an export produced by exportMarkscheme and adds the clean-layout header, footer and watermark. */
 export async function decorateExport(bytes: Uint8Array, title: string, options: CleanOptions): Promise<Uint8Array> {
-  const out = await PDFDocument.load(bytes);
-  const font = await out.embedFont(StandardFonts.Helvetica);
-  const bold = await out.embedFont(StandardFonts.HelveticaBold);
-  await decoratePages(out, { title, subject: options.subject, stamp: options.stamp, exportedAt: options.exportedAt, admin: options.admin, siteUrl: options.siteUrl, font, bold });
-  return out.save();
+  const { signal } = options;
+  const out = await abortable(signal, () => PDFDocument.load(bytes));
+  const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
+  const bold = await abortable(signal, () => out.embedFont(StandardFonts.HelveticaBold));
+  await decoratePages(out, { ...options, title, font, bold });
+  return abortable(signal, () => out.save());
 }
 
-async function decoratePages(out: PDFDocument, o: { title: string; subject: string; stamp?: string; exportedAt?: Date; admin?: boolean; siteUrl?: string; font: Awaited<ReturnType<PDFDocument['embedFont']>>; bold: Awaited<ReturnType<PDFDocument['embedFont']>> }) {
+async function decoratePages(out: PDFDocument, o: CleanOptions & { title: string; font: Awaited<ReturnType<PDFDocument['embedFont']>>; bold: Awaited<ReturnType<PDFDocument['embedFont']>> }) {
   const date = (o.exportedAt ?? new Date()).toISOString().slice(0, 10);
   out.setTitle(o.title);
   out.setAuthor(SITE_NAME);
@@ -294,7 +334,8 @@ async function decoratePages(out: PDFDocument, o: { title: string; subject: stri
   const pages = out.getPages();
   const grey = rgb(0.42, 0.42, 0.4);
   const stamp = o.admin ? '' : (o.stamp ?? '').trim();
-  pages.forEach((page, i) => {
+  for (const [i, page] of pages.entries()) {
+    await checkpoint(o.signal);
     const { width, height } = page.getSize();
     // Diagonal wordmark watermark in the site's colours: LITTLE and BANK in gold, RED in red.
     const parts: [string, ReturnType<typeof rgb>][] = [['LITTLE ', GOLD], ['RED ', RED], ['BANK', GOLD]];
@@ -336,7 +377,7 @@ async function decoratePages(out: PDFDocument, o: { title: string; subject: stri
     }
     const num = `Page ${i + 1} of ${pages.length}`;
     page.drawText(num, { x: width - 24 - o.font.widthOfTextAtSize(num, 7.5), y: 14, size: 7.5, font: o.bold, color: RED });
-  });
+  }
 }
 
 /** Adds a clickable URI link annotation over a rectangle [x0, y0, x1, y1] (no visible border). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dailyCounts, describeDevice, exportDetail, onlineNow, subjectCounts, summarizeByUser, toCsv, type ActivityRow } from './activity';
+import { dailyCounts, describeDevice, exportDetail, onlineNow, subjectCounts, summarizeByUser, toCsv, fetchActivityPage, fetchActivitySummary, fetchAllActivity, type ActivityRow } from './activity';
 
 const now = new Date('2026-09-29T20:00:00Z');
 const row = (username: string, kind: ActivityRow['kind'], at: string, extra: Partial<ActivityRow> = {}): ActivityRow => ({
@@ -40,5 +40,35 @@ describe('admin activity helpers', () => {
 
   it('summarises exported papers', () => {
     expect(exportDetail(['P1 TZ1 May 2024', 'P1 TZ1 May 2024', 'P2 Nov 2023'])).toBe('P1 TZ1 May 2024 ×2; P2 Nov 2023');
+  });
+
+  it('uses uncapped server aggregates rather than the loaded feed', async () => {
+    const client = { rpc: async (name: string) => {
+      expect(name).toBe('admin_activity_summary');
+      return { data: { totals: { users: 3, exports: 5100, questions: 10200 },
+        users: [{ username: 'early', userAgents: ['Chrome/130.0 Macintosh', 'Chrome/130.0 Macintosh'] }], days: [], subjects: [] }, error: null };
+    } };
+    const summary = await fetchActivitySummary(client, { since: 'start', until_at: 'end' });
+    expect(summary.totals.exports).toBe(5100);
+    expect(summary.users[0].devices).toEqual(['Chrome on Mac']);
+  });
+
+  it('paginates a stable snapshot and passes filters and same-time tie cursor', async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = { rpc: async (name: string, args: Record<string, unknown>) => {
+      expect(name).toBe('admin_activity_page'); calls.push(args);
+      return { data: { rows: [row('a', 'export', now.toISOString())], next: calls.length === 1 ? { at: now.toISOString(), key: 'activity-42' } : null }, error: null };
+    } };
+    const filter = { user_name: 'a', event_kind: 'export', search_text: 'physics' };
+    const rows = await fetchAllActivity(client, { since: 'start', until_at: 'end' }, filter);
+    expect(rows).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ since: 'start', until_at: 'end', ...filter, before_at: now.toISOString(), before_key: 'activity-42' });
+    expect(calls[0].max_rows).toBeUndefined();
+  });
+
+  it('fails closed on revoked dashboard access, never fabricating empty totals', async () => {
+    const client = { rpc: async () => ({ data: null, error: { message: 'admins_only' } }) };
+    await expect(fetchActivitySummary(client, { since: 'start', until_at: 'end' })).rejects.toThrow('admins_only');
+    await expect(fetchActivityPage(client, { since: 'start', until_at: 'end' })).rejects.toThrow('admins_only');
   });
 });

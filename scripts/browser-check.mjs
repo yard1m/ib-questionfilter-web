@@ -8,11 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 import { chromium } from 'playwright';
 import { inspectBundle } from './verify-bundle.mjs';
+import { loadCorpus, verifiedBytes } from './local-corpus.mjs';
 
 const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const REPO_ROOT = resolve(WEB_ROOT, '..');
 const DIST = resolve(WEB_ROOT, 'dist');
-const CORPUS_DIR = resolve(REPO_ROOT, '.web-corpus');
 const BASE = '/ib-questionfilter-web/';
 const TYPES = {
   '.bcmap': 'application/octet-stream',
@@ -85,14 +84,7 @@ function findRequireAllPair(subject) {
 }
 
 async function loadLocalCorpus() {
-  const [manifestText, catalogText] = await Promise.all([
-    readFile(join(CORPUS_DIR, 'upload-manifest.json'), 'utf8'),
-    readFile(join(CORPUS_DIR, 'catalog.json'), 'utf8'),
-  ]);
-  const manifest = JSON.parse(manifestText);
-  const catalog = JSON.parse(catalogText);
-  requireCondition(manifest.objectCount === 717 && manifest.objects?.length === 717, 'local manifest must contain exactly 717 objects');
-  return { manifest, catalog, objects: new Map(manifest.objects.map((item) => [item.key, item])) };
+  return loadCorpus(WEB_ROOT);
 }
 
 async function findRotatedAnswer(local) {
@@ -108,7 +100,7 @@ async function findRotatedAnswer(local) {
   for (const [key, entries] of questionsByKey) {
     const item = local.objects.get(key);
     if (!item) continue;
-    const bytes = await readFile(resolve(REPO_ROOT, item.file));
+    const bytes = verifiedBytes(local.repoRoot, item);
     const document = await PDFDocument.load(bytes, { ignoreEncryption: true, throwOnInvalidObject: false, updateMetadata: false });
     for (const entry of entries) {
       for (const answer of entry.question.a) {
@@ -259,7 +251,7 @@ async function ensurePdfAssets() {
 }
 
 async function checkbox(page, name) {
-  const locator = page.getByRole('checkbox', { name });
+  const locator = page.getByRole('checkbox', { name, exact: typeof name === 'string' });
   await locator.first().waitFor({ state: 'attached' });
   return locator.first();
 }
@@ -267,6 +259,16 @@ async function checkbox(page, name) {
 async function setChecked(page, name, checked) {
   const locator = await checkbox(page, name);
   if ((await locator.isChecked()) !== checked) await locator.click();
+}
+
+async function setTopic(page, label, state) {
+  const row = page.locator('button.topic-row').filter({ has: page.getByText(label, { exact: true }) });
+  requireCondition(await row.count() === 1, `expected one topic row for ${label}`);
+  for (let i = 0; i < 3; i++) {
+    if ((await row.getAttribute('class')).split(' ').includes(state)) return;
+    await row.click();
+  }
+  requireCondition((await row.getAttribute('class')).split(' ').includes(state), `topic ${label} did not reach ${state}`);
 }
 
 async function setFacetExclusive(page, values, keep) {
@@ -284,6 +286,21 @@ async function waitForCards(page) {
 
 async function allQuestionTitles(page) {
   return page.locator('.qtitle').allInnerTexts();
+}
+
+async function assertFacetIds(page, local, subject, facet, keep) {
+  // The frontend filters canonical documents; refs are displayed as occurrences, not facetable
+  // documents (they carry no structured year/session/level). Compare IDs, never display titles.
+  const expected = subject.questions.filter(question => local.catalog.documents[question.doc][facet] === keep).map(question => question.id).sort();
+  // Large subject lists can still be reconciling after a click. Await the exact set, not merely
+  // a nonempty list or a fixed sleep; an incorrect filter still fails this gate.
+  await page.waitForFunction(expected => {
+    const actual = [...document.querySelectorAll('.qcard')].map(card => card.dataset.questionId).sort();
+    return JSON.stringify(actual) === JSON.stringify(expected);
+  }, expected, { timeout: 10000 });
+  const actual = (await page.locator('.qcard').evaluateAll(cards => cards.map(card => card.dataset.questionId))).sort();
+  requireCondition(expected.length > 0 && JSON.stringify(actual) === JSON.stringify(expected), `expected ${expected.length} canonical IDs, got ${actual.length}; missing=${expected.filter(id => !actual.includes(id)).slice(0, 3)}; extra=${actual.filter(id => !expected.includes(id)).slice(0, 3)}`);
+  return actual.length;
 }
 
 async function downloadBytes(download) {
@@ -328,9 +345,8 @@ async function main() {
     const subjects = local.catalog.subjects.map((subject) => subjectInfo(local.catalog, subject));
     const subjectById = new Map(subjects.map((subject) => [subject.id, subject]));
 
-    await runCheck('local manifest contains all 717 expected objects', async () => {
-      requireCondition(local.manifest.objects.length === 717, `found ${local.manifest.objects.length}`);
-      return `${local.manifest.objects.length} objects`;
+    await runCheck('local manifest matches catalog counts, source keys and schema', async () => {
+      return `${local.manifest.objects.length} objects; ${local.catalog.documents.length} documents; ${local.catalog.questions.length} questions`;
     });
 
     const bundle = inspectBundle(DIST);
@@ -413,25 +429,35 @@ async function main() {
 
     const physics = subjectById.get('physics');
     requireCondition(physics, 'the local catalog has no Physics subject');
+    const requirePair = findRequireAllPair(physics);
     await subjectButton(physics.name).click();
     await waitForCards(page);
     await runCheck('year filter narrows the local app', async () => {
       const keep = physics.years.find((year) => physics.questions.some((question) => local.catalog.documents[question.doc].year === year));
       requireCondition(keep !== undefined, 'no usable year facet');
       await setFacetExclusive(page, physics.years, keep);
-      const titles = await allQuestionTitles(page);
-      requireCondition(titles.length > 0 && titles.every((title) => title.includes(String(keep))), `unexpected titles: ${titles.slice(0, 2).join(' | ')}`);
-      return `${titles.length} questions in ${keep}`;
+      return `${await assertFacetIds(page, local, physics, 'year', keep)} questions in ${keep}`;
     });
     await page.getByRole('button', { name: 'Reset filters', exact: true }).click();
     await waitForCards(page);
+
+    await runCheck('secondary topics allow extras but cannot replace a required topic', async () => {
+      requireCondition(requirePair, 'no multi-topic secondary fixture exists');
+      await setTopic(page, requirePair[0], 'required');
+      await setTopic(page, requirePair[1], 'secondary');
+      const expected = physics.questions.filter(question => question.topics.includes(requirePair[0]) && question.topics.every(topic => requirePair.includes(topic)));
+      const titles = await allQuestionTitles(page);
+      requireCondition(expected.length > 0 && titles.length === expected.length, `expected=${expected.length}, actual=${titles.length}`);
+      await setTopic(page, requirePair[0], 'off');
+      requireCondition(await page.locator('.qcard').count() === 0, 'secondary-only questions are visible');
+      await setTopic(page, requirePair[1], 'off');
+      return `${expected.length} questions with required + allowed topics; none for secondary alone`;
+    });
     await runCheck('level filter narrows the local app', async () => {
       const keep = physics.levels.find((level) => physics.questions.some((question) => local.catalog.documents[question.doc].level === level));
       requireCondition(keep !== undefined, 'no usable level facet');
       await setFacetExclusive(page, physics.levels, keep);
-      const titles = await allQuestionTitles(page);
-      requireCondition(titles.length > 0 && titles.every((title) => title.includes(` ${keep} `)), `unexpected titles: ${titles.slice(0, 2).join(' | ')}`);
-      return `${titles.length} questions at ${keep}`;
+      return `${await assertFacetIds(page, local, physics, 'level', keep)} questions at ${keep}`;
     });
     await page.getByRole('button', { name: 'Reset filters', exact: true }).click();
     await waitForCards(page);
@@ -439,9 +465,7 @@ async function main() {
       const keep = physics.papers.find((paper) => physics.questions.some((question) => local.catalog.documents[question.doc].paper === paper));
       requireCondition(keep !== undefined, 'no usable paper facet');
       await setFacetExclusive(page, physics.papers, keep);
-      const titles = await allQuestionTitles(page);
-      requireCondition(titles.length > 0 && titles.every((title) => title.includes(`· ${keep}`)), `unexpected titles: ${titles.slice(0, 2).join(' | ')}`);
-      return `${titles.length} questions in ${keep}`;
+      return `${await assertFacetIds(page, local, physics, 'paper', keep)} questions in ${keep}`;
     });
     await page.getByRole('button', { name: 'Reset filters', exact: true }).click();
     await waitForCards(page);
@@ -449,27 +473,26 @@ async function main() {
     const subsetTopic = findSubsetTopic(physics);
     await runCheck('only-selected topic mode applies the subset rule', async () => {
       requireCondition(subsetTopic, 'no single-topic/multi-topic subset fixture exists');
-      await setChecked(page, subsetTopic, true);
+      await setTopic(page, subsetTopic, 'required');
       const anyCount = await page.locator('.qcard').count();
       requireCondition(anyCount > 0, 'topic any-mode returned no questions');
       await setChecked(page, /^Only selected topics/ , true);
       const subsetCount = await page.locator('.qcard').count();
       requireCondition(subsetCount > 0 && subsetCount < anyCount, `any=${anyCount}, subset=${subsetCount}`);
       await setChecked(page, /^Only selected topics/, false);
-      await setChecked(page, subsetTopic, false);
+      await setTopic(page, subsetTopic, 'off');
       return `any=${anyCount}, subset=${subsetCount}`;
     });
-    const requirePair = findRequireAllPair(physics);
     await runCheck('require-every-topic mode applies the all-topics rule', async () => {
       requireCondition(requirePair, 'no multi-topic require-all fixture exists');
-      for (const topic of requirePair) await setChecked(page, topic, true);
+      for (const topic of requirePair) await setTopic(page, topic, 'required');
       const anyCount = await page.locator('.qcard').count();
       await setChecked(page, /^Require every selected topic$/, true);
       const allCount = await page.locator('.qcard').count();
       requireCondition(allCount > 0 && allCount <= anyCount, `any=${anyCount}, all=${allCount}`);
       requireCondition(!(await (await checkbox(page, /^Only selected topics/)).isChecked()), 'topic modes are not mutually exclusive');
       await setChecked(page, /^Require every selected topic$/, false);
-      for (const topic of requirePair) await setChecked(page, topic, false);
+      for (const topic of requirePair) await setTopic(page, topic, 'off');
       return `any=${anyCount}, all=${allCount}`;
     });
     await page.getByRole('button', { name: 'Reset filters', exact: true }).click();
@@ -483,7 +506,7 @@ async function main() {
 
     const rotatedSubject = subjectById.get(rotated.document.subject);
     requireCondition(rotatedSubject, `unknown rotated subject ${rotated.document.subject}`);
-    await page.getByRole('button', { name: rotatedSubject.name, exact: true }).click();
+    await subjectButton(rotatedSubject.name).click();
     await waitForCards(page);
     await runCheck('rotated question is reachable through year/session/level/paper filters', async () => {
       await setFacetExclusive(page, rotatedSubject.years, rotated.document.year);
@@ -513,10 +536,25 @@ async function main() {
       return `${rotated.question.q.length} rendered slice(s)`;
     });
 
-    await runCheck('selected question and rotated markscheme PDFs both download', async () => {
+    for (const layout of ['clean', 'original']) await runCheck(`${layout} question and rotated markscheme PDFs both download`, async () => {
       requireCondition(await rotatedCard.count() === 1, 'rotated question card is unavailable');
       await rotatedCard.locator('input[type="checkbox"]').first().check();
       await setChecked(page, /^Markscheme PDF$/, true);
+      await setChecked(page, /^Clean layout$/, layout === 'clean');
+      const originalSlices = layout === 'original' ? await page.evaluate(async ({ key, slices }) => {
+        const [{ pdfContentCheck }, { openForRendering }] = await Promise.all([import('/src/lib/sliceContent.ts'), import('/src/lib/render.ts')]);
+        const load = async sourceKey => {
+          const response = await fetch(`/__local-corpus/object/${sourceKey}`);
+          if (!response.ok) throw new Error(`source download failed: ${response.status}`);
+          return new Uint8Array(await response.arrayBuffer());
+        };
+        const content = pdfContentCheck(load, openForRendering);
+        try {
+          const kept = [];
+          for (const slice of slices) if (await content.hasContent(key, { page: slice[0], lower: slice[1], upper: slice[2], left: slice[3] ?? null, right: slice[4] ?? null })) kept.push(slice);
+          return kept.length ? kept : slices.slice(0, 1);
+        } finally { await content.close(); }
+      }, { key: rotated.document.paperKey, slices: rotated.question.q }) : null;
       const files = await collectDownloads(
         page,
         () => page.getByRole('button', { name: /^Export \d+ questions?$/ }).click(),
@@ -530,7 +568,22 @@ async function main() {
       requireCondition(questionDownload && markschemeDownload, files.map((download) => download.suggestedFilename()).join(' | '));
       const questionPdf = await PDFDocument.load(await downloadBytes(questionDownload));
       const markschemePdf = await PDFDocument.load(await downloadBytes(markschemeDownload));
-      requireCondition(questionPdf.getPageCount() === rotated.question.q.length, `question pages=${questionPdf.getPageCount()}`);
+      requireCondition(questionPdf.getPageCount() > 0, 'question export has no pages');
+      if (layout === 'clean') {
+        requireCondition(questionPdf.getPages().every(pdfPage => Math.abs(pdfPage.getWidth() - 595.28) < 0.1 && Math.abs(pdfPage.getHeight() - 841.89) < 0.1), 'clean question output is not portrait A4');
+        requireCondition(questionPdf.getAuthor() === 'Little Red Bank' && markschemePdf.getAuthor() === 'Little Red Bank', 'clean export decoration metadata is missing');
+      } else {
+        requireCondition(questionPdf.getPageCount() === originalSlices.length, `question pages=${questionPdf.getPageCount()}, nonempty slices=${originalSlices.length}`);
+        const sourceItem = local.objects.get(rotated.document.paperKey);
+        const source = await PDFDocument.load(verifiedBytes(local.repoRoot, sourceItem));
+        for (const [index, pdfPage] of questionPdf.getPages().entries()) {
+          const slice = originalSlices[index];
+          const original = source.getPage(slice[0]);
+          const rotation = original.getRotation().angle % 180;
+          const width = rotation ? original.getHeight() : original.getWidth();
+          requireCondition(Math.abs(pdfPage.getWidth() - width) < 0.1 && Math.abs(pdfPage.getHeight() - (slice[2] - slice[1])) < 0.1, 'original question output does not match its source slice');
+        }
+      }
       requireCondition(markschemePdf.getPageCount() > 0, 'markscheme has no pages');
       requireCondition(markschemePdf.getPages().every((pdfPage) => Math.round(pdfPage.getWidth()) === 842 && Math.round(pdfPage.getHeight()) === 595), 'markscheme output contains a review/portrait page');
       return `${questionName}; ${markschemeName}; ${markschemePdf.getPageCount()} landscape page(s)`;

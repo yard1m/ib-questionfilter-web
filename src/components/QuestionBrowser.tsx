@@ -94,7 +94,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     try { window.localStorage.setItem('ibqf.exportLayout', clean ? 'clean' : 'original'); } catch { /* per-browser convenience only */ }
   };
   const [progress, setProgress] = useState<{ stage: string; done: number; total: number } | null>(null);
-  const cancelRef = useRef(false);
+  const cancelRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { cancelRef.current?.abort(); }, []);
   // Timing for the progress panel: when the export and the current stage started.
   const startedRef = useRef(0);
   const stageStartedRef = useRef(0);
@@ -143,10 +144,14 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
 
   async function exportSelection() {
     if (!chosen.length || busy) return;
+    const controller = new AbortController();
+    cancelRef.current = controller;
+    const { signal } = controller;
     setBusy(true);
     setMessage(null);
     try {
       const { exportMarkscheme, exportQuestions, exportQuestionsClean, decorateExport } = await import('../lib/exportPdf');
+      signal.throwIfAborted();
       // Fetch every paper the export needs up front, several at a time; the builders then read
       // them from the in-memory cache. One at a time took minutes for a large selection.
       const keys = [...new Set(chosen.flatMap((q) => [
@@ -154,59 +159,85 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         ...(withMarkscheme && q.answerSlices && q.document.markschemeKey ? [q.document.markschemeKey] : []),
       ]))];
       let done = 0;
-      cancelRef.current = false;
       startedRef.current = Date.now();
       stageStartedRef.current = Date.now();
       setProgress({ stage: 'Downloading papers', done: 0, total: keys.length });
       const queue = [...keys];
       const worker = async () => {
         for (let key = queue.shift(); key; key = queue.shift()) {
-          if (cancelRef.current) throw new Error('cancelled');
-          await Promise.race([
-            loadPdf(key),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 90_000)),
-          ]);
+          signal.throwIfAborted();
+          await new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const finish = (error?: unknown) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              signal.removeEventListener('abort', onAbort);
+              if (error !== undefined) reject(error);
+              else resolve();
+            };
+            const onAbort = () => finish(signal.reason);
+            const timer = setTimeout(() => finish(new Error('timeout')), 90_000);
+            signal.addEventListener('abort', onAbort, { once: true });
+            Promise.resolve().then(() => loadPdf(key)).then(() => finish(), finish);
+          });
+          signal.throwIfAborted();
           done += 1;
           setProgress({ stage: 'Downloading papers', done, total: keys.length });
         }
       };
       await Promise.all(Array.from({ length: Math.min(6, keys.length) }, worker));
-      if (cancelRef.current) throw new Error('cancelled');
+      signal.throwIfAborted();
       stageStartedRef.current = Date.now();
       setProgress({ stage: 'Building PDFs', done: keys.length, total: keys.length });
       const base = `${subject.name} Filtered Questions`;
       const [{ openForRendering }, { pdfContentCheck }] = await Promise.all([import('../lib/render'), import('../lib/sliceContent')]);
+      signal.throwIfAborted();
       const content = pdfContentCheck(loadPdf, openForRendering);
       let text: string;
       try {
         const exportedAt = new Date();
         const questions = cleanLayout
-          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox, admin: unmarked, siteUrl })
-          : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent);
-        onActivity?.('export', subject.id, chosen.length, exportDetail(chosen.map(paperOf)));
-        download(questions.bytes, `${base}.pdf`);
+          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox, admin: unmarked, siteUrl, signal })
+          : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent, signal);
+        signal.throwIfAborted();
+        const downloads = [{ bytes: questions.bytes, filename: `${base}.pdf` }];
+        let exportedAnswers: number | null = null;
         text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
         if (withMarkscheme) {
-          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent, cleanLayout ? content.contentBox : undefined);
+          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent, cleanLayout ? content.contentBox : undefined, signal);
+          signal.throwIfAborted();
           const markschemeBytes = cleanLayout
-            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl })
+            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl, signal })
             : markscheme.bytes;
-          onActivity?.('markscheme', subject.id, chosen.length, exportDetail(chosen.map(paperOf)));
-          download(markschemeBytes, `${base} Markscheme.pdf`);
+          signal.throwIfAborted();
+          downloads.push({ bytes: markschemeBytes, filename: `${base} Markscheme.pdf` });
+          exportedAnswers = markscheme.exported;
           text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
           text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
         }
+        signal.throwIfAborted();
+        for (const file of downloads) {
+          signal.throwIfAborted();
+          download(file.bytes, file.filename);
+        }
+        onActivity?.('export', subject.id, questions.exported, exportDetail(chosen.map(paperOf)));
+        if (exportedAnswers !== null) onActivity?.('markscheme', subject.id, exportedAnswers, exportDetail(chosen.map(paperOf)));
       } finally {
         await content.close();
       }
+      signal.throwIfAborted();
       setMessage({ kind: 'ok', text: `${text} Took ${formatSeconds(Date.now() - startedRef.current)}.` });
     } catch (error) {
-      setMessage(error instanceof Error && error.message === 'cancelled'
+      const userCancelled = signal.aborted && signal.reason === 'cancelled';
+      controller.abort(error);
+      setMessage(userCancelled
         ? { kind: 'ok', text: 'Export cancelled.' }
         : { kind: 'error', text: error instanceof Error && error.message === 'timeout'
           ? 'A paper took too long to download. Check your connection and try again.'
           : 'The export failed. Try again, or select fewer questions.' });
     } finally {
+      if (cancelRef.current === controller) cancelRef.current = null;
       setProgress(null);
       setBusy(false);
     }
@@ -387,7 +418,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                 <div className={`export-progress-bar${progress.stage === 'Building PDFs' ? ' building' : ''}`}
                   style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }} />
               </div>
-              <button type="button" className="link" onClick={() => { cancelRef.current = true; }}>Cancel</button>
+              <button type="button" className="link" onClick={() => { cancelRef.current?.abort('cancelled'); }}>Cancel</button>
             </div>
           )}
           {message && <div className={`status ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
@@ -406,7 +437,7 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
           ) : (
             <ul className="qlist">
               {visible.map((q, index) => (
-                <li key={q.id} className={`qcard${selected.has(q.id) ? ' selected' : ''}`}>
+                <li key={q.id} data-question-id={q.id} className={`qcard${selected.has(q.id) ? ' selected' : ''}`}>
                   <input type="checkbox" checked={selected.has(q.id)} onChange={() => toggleQuestion(q.id)}
                     aria-label={`Select ${questionTitle(q)}`} />
                   <span className="qnumber" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>

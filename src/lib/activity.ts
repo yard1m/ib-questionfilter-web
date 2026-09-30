@@ -6,6 +6,7 @@
 export type ActivityKind = 'visit' | 'sign_in' | 'preview' | 'export' | 'markscheme';
 
 export interface ActivityRow {
+  event_key?: string;
   at: string;
   user_id: string;
   username: string;
@@ -15,6 +16,57 @@ export interface ActivityRow {
   detail: string | null;
   user_agent: string | null;
   network: string | null;
+}
+
+export interface ActivitySnapshot { since: string; until_at: string }
+export interface ActivityCursor { at: string; key: string }
+export interface ActivityFilters { user_name?: string | null; event_kind?: string | null; search_text?: string | null }
+export interface ActivityPage { rows: ActivityRow[]; next: ActivityCursor | null }
+export interface ActivitySummary {
+  totals: { users: number; signIns: number; exports: number; questions: number; markschemes: number; previews: number };
+  users: UserSummary[];
+  days: { day: string; users: number; exports: number; previews: number; visits: number }[];
+  subjects: { subject: string; exports: number; previews: number; questions: number }[];
+}
+interface ActivityRpc {
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+}
+
+export async function fetchActivitySummary(client: ActivityRpc, snapshot: ActivitySnapshot): Promise<ActivitySummary> {
+  const { data, error } = await client.rpc('admin_activity_summary', { ...snapshot });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('Missing activity summary');
+  const summary = data as Omit<ActivitySummary, 'users'> & { users: (Omit<UserSummary, 'devices'> & { userAgents: string[] })[] };
+  return { ...summary, users: summary.users.map(({ userAgents, ...user }) => ({
+    ...user, devices: [...new Set(userAgents.map(describeDevice).filter((d) => d !== 'Unknown device'))],
+  })) };
+}
+
+export async function fetchActivityPage(client: ActivityRpc, snapshot: ActivitySnapshot, filters: ActivityFilters = {}, cursor: ActivityCursor | null = null): Promise<ActivityPage> {
+  const { data, error } = await client.rpc('admin_activity_page', {
+    ...snapshot, ...filters, page_size: 200, before_at: cursor?.at ?? null, before_key: cursor?.key ?? null,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('Missing activity page');
+  return data as ActivityPage;
+}
+
+/** CSV export walks every filtered page, independent of the currently displayed page. */
+export async function fetchAllActivity(client: ActivityRpc, snapshot: ActivitySnapshot, filters: ActivityFilters = {}): Promise<ActivityRow[]> {
+  const rows: ActivityRow[] = [];
+  const seen = new Set<string>();
+  let cursor: ActivityCursor | null = null;
+  do {
+    const page = await fetchActivityPage(client, snapshot, filters, cursor);
+    rows.push(...page.rows);
+    cursor = page.next;
+    if (cursor) {
+      const key = `${cursor.at}/${cursor.key}`;
+      if (seen.has(key)) throw new Error('Repeated activity cursor');
+      seen.add(key);
+    }
+  } while (cursor);
+  return rows;
 }
 
 export interface UserSummary {

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Catalog } from '../lib/catalog';
 import {
-  KIND_LABELS, dailyCounts, describeDevice, onlineNow, subjectCounts, summarizeByUser, toCsv,
-  type ActivityKind, type ActivityRow,
+  KIND_LABELS, describeDevice, toCsv, fetchActivitySummary, fetchActivityPage, fetchAllActivity,
+  type ActivityKind, type ActivityRow, type ActivitySummary, type ActivityCursor, type ActivitySnapshot,
 } from '../lib/activity';
 import { describeLastSeen } from '../lib/admin';
 import { AdminPanel } from './AdminPanel';
@@ -14,8 +14,6 @@ const RANGES = [
   { id: '30', label: 'Last 30 days', days: 30 },
   { id: '90', label: 'Last 90 days', days: 90 },
 ];
-
-const FEED_PAGE = 200;
 
 function time(iso: string) {
   const d = new Date(iso);
@@ -40,19 +38,33 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
   const [userFilter, setUserFilter] = useState('');
   const [kindFilter, setKindFilter] = useState<'' | ActivityKind | 'no_visits'>('no_visits');
   const [search, setSearch] = useState('');
-  const [shown, setShown] = useState(FEED_PAGE);
+  const [summary, setSummary] = useState<ActivitySummary | null>(null);
+  const [cursor, setCursor] = useState<ActivityCursor | null>(null);
+  const [snapshot, setSnapshot] = useState<ActivitySnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const generation = useRef(0);
+  const pageBusy = useRef(false);
   const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
+  const filters = useMemo(() => ({ user_name: userFilter || null, event_kind: kindFilter || null, search_text: search.trim() || null }), [userFilter, kindFilter, search]);
+
+  const showError = (err: unknown) => setError(err instanceof Error && /admins_only/.test(err.message) ? 'Admins only.' : 'Could not load activity. Try again.');
 
   const load = useCallback(async () => {
-    const since = new Date(Date.now() - range.days * 86_400_000).toISOString();
-    const { data, error: err } = await client.rpc('admin_activity', { since, max_rows: 5000 });
-    if (err) { setError(/admins_only/.test(err.message) ? 'Admins only.' : 'Could not load activity. Try again.'); return; }
-    setError(null);
-    setRows((data ?? []) as ActivityRow[]);
-    setLoadedAt(new Date());
-  }, [client, range.days]);
+    const version = ++generation.current;
+    const end = new Date();
+    const window = { since: new Date(end.getTime() - range.days * 86_400_000).toISOString(), until_at: end.toISOString() };
+    setBusy(true); setRows([]); setCursor(null); setSummary(null); setSnapshot(null);
+    try {
+      const [totals, page] = await Promise.all([fetchActivitySummary(client, window), fetchActivityPage(client, window, filters)]);
+      if (generation.current !== version) return;
+      setSummary(totals); setRows(page.rows); setCursor(page.next); setSnapshot(window);
+      setError(null); setLoadedAt(end);
+    } catch (err) { if (generation.current === version) showError(err); }
+    finally { if (generation.current === version) setBusy(false); }
+  }, [client, range.days, filters]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { generation.current += 1; }; }, [load]);
   useEffect(() => {
     if (!auto) return;
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
@@ -60,38 +72,46 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
   }, [auto, load]);
   useEffect(() => { document.title = 'Admin · Little Red Bank'; }, []);
 
-  const now = loadedAt ?? new Date();
-  const online = useMemo(() => onlineNow(rows, now), [rows, now]);
-  const users = useMemo(() => summarizeByUser(rows, now), [rows, now]);
-  const days = useMemo(() => dailyCounts(rows, Math.min(range.days === 1 ? 1 : range.days, 30), now), [rows, range.days, now]);
-  const subjects = useMemo(() => subjectCounts(rows), [rows]);
+  const users = summary?.users ?? [];
+  const online = users.filter((u) => u.online).map((u) => u.username).sort();
+  const days = useMemo(() => {
+    const end = loadedAt ?? new Date();
+    return Array.from({ length: Math.min(range.days, 30) }, (_, i) => {
+      const day = new Date(end.getTime() - (Math.min(range.days, 30) - 1 - i) * 86_400_000).toISOString().slice(0, 10);
+      return summary?.days.find((d) => d.day === day) ?? { day, users: 0, exports: 0, previews: 0, visits: 0 };
+    });
+  }, [summary, range.days, loadedAt]);
+  const subjects = summary?.subjects ?? [];
   const subjectName = (id: string | null) => catalog?.subjects.find((s) => s.id === id)?.name
     ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : '');
-  const totals = useMemo(() => ({
-    users: new Set(rows.map((r) => r.username)).size,
-    signIns: rows.filter((r) => r.kind === 'sign_in').length,
-    exports: rows.filter((r) => r.kind === 'export').length,
-    questions: rows.filter((r) => r.kind === 'export').reduce((n, r) => n + r.items, 0),
-    markschemes: rows.filter((r) => r.kind === 'markscheme').length,
-    previews: rows.filter((r) => r.kind === 'preview').length,
-  }), [rows]);
-
-  const feed = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => (!userFilter || r.username === userFilter)
-      && (kindFilter === '' || (kindFilter === 'no_visits' ? r.kind !== 'visit' : r.kind === kindFilter))
-      && (!q || [r.username, r.subject, r.detail, describeDevice(r.user_agent)].some((v) => v?.toLowerCase().includes(q))));
-  }, [rows, userFilter, kindFilter, search]);
-  useEffect(() => { setShown(FEED_PAGE); }, [userFilter, kindFilter, search, rangeId]);
+  const totals = summary?.totals ?? { users: 0, signIns: 0, exports: 0, questions: 0, markschemes: 0, previews: 0 };
+  const feed = rows;
 
   const peak = Math.max(1, ...days.map((d) => d.visits + d.previews + d.exports));
 
-  function downloadCsv() {
-    const blob = new Blob([toCsv(feed)], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `activity-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-    URL.revokeObjectURL(url);
+  async function loadMore() {
+    if (!snapshot || !cursor || busy || pageBusy.current) return;
+    const version = generation.current;
+    pageBusy.current = true; setBusy(true);
+    try {
+      const page = await fetchActivityPage(client, snapshot, filters, cursor);
+      if (generation.current !== version) return;
+      setRows((previous) => [...previous, ...page.rows]); setCursor(page.next); setError(null);
+    } catch (err) { if (generation.current === version) showError(err); }
+    finally { pageBusy.current = false; if (generation.current === version) setBusy(false); }
+  }
+
+  async function downloadCsv() {
+    if (!snapshot || csvBusy) return;
+    setCsvBusy(true);
+    try {
+      const all = await fetchAllActivity(client, snapshot, filters);
+      const url = URL.createObjectURL(new Blob([toCsv(all)], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `activity-${snapshot.until_at.slice(0, 10)}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { showError(err); }
+    finally { setCsvBusy(false); }
   }
 
   return (
@@ -112,13 +132,14 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
             </select>
           </label>
           <label className="check inline"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /><span>Auto-refresh</span></label>
-          <button type="button" className="btn secondary" onClick={() => void load()}>Refresh</button>
+          <button type="button" className="btn secondary" disabled={busy} onClick={() => void load()}>Refresh</button>
           <a className="btn secondary" href={window.location.pathname}>Question bank</a>
           <button type="button" className="btn secondary" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
 
       {error && <p className="error" role="alert">{error}</p>}
+      {busy && <p role="status">Loading activity...</p>}
 
       <section className="dash-cards" aria-label="Summary">
         <div className="panel dash-card">
@@ -203,7 +224,7 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
               {(Object.keys(KIND_LABELS) as ActivityKind[]).map((k) => <option key={k} value={k}>{KIND_LABELS[k]}s</option>)}
             </select>
             <input type="search" placeholder="Search papers, devices…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search activity" />
-            <button type="button" className="btn secondary" onClick={downloadCsv} disabled={!feed.length}>Download CSV</button>
+            <button type="button" className="btn secondary" onClick={() => void downloadCsv()} disabled={!snapshot || csvBusy || busy}>{csvBusy ? 'Preparing CSV...' : 'Download CSV'}</button>
           </div>
         </div>
         {feed.length === 0 ? <p className="muted">Nothing matches.</p> : (
@@ -211,8 +232,8 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
             <table className="dash-table">
               <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Subject</th><th>Details</th><th>Device</th></tr></thead>
               <tbody>
-                {feed.slice(0, shown).map((r, i) => (
-                  <tr key={`${r.at}-${i}`}>
+                {feed.map((r, i) => (
+                  <tr key={r.event_key ?? `${r.at}-${i}`}>
                     <td className="nowrap" title={r.at}>{time(r.at)}</td>
                     <td>{r.username}</td>
                     <td><span className={`tag kind-${r.kind}`}>{KIND_LABELS[r.kind] ?? r.kind}</span></td>
@@ -225,7 +246,7 @@ export function AdminDashboard({ client, account, catalog, onSignOut }: {
             </table>
           </div>
         )}
-        {feed.length > shown && <button type="button" className="btn secondary" onClick={() => setShown((n) => n + FEED_PAGE)}>Show more ({feed.length - shown} left)</button>}
+        {cursor && <button type="button" className="btn secondary" disabled={busy} onClick={() => void loadMore()}>Show more</button>}
         <p className="small muted">Activity is recorded from 29 September 2026; sign-ins before that come from the session log. Visits are a heartbeat every five minutes while the site is open.</p>
       </section>
 
