@@ -69,6 +69,30 @@ jobs:
       - name: Verify the published bundle contains no private corpus assets
         run: npm run verify:bundle
 
+      - name: Point the Pages site at the self-hosted copy (when SITE_MOVED_TO is set)
+        env:
+          SITE_MOVED_TO: ${{ vars.SITE_MOVED_TO }}
+        run: |
+          test -z "$SITE_MOVED_TO" && exit 0
+          case "$SITE_MOVED_TO" in
+            https://*/ib-questionfilter-web/) ;;
+            *) echo "SITE_MOVED_TO must be https://<host>/ib-questionfilter-web/"; exit 1 ;;
+          esac
+          rm -rf dist && mkdir dist
+          cat > dist/index.html <<HTML
+          <!doctype html>
+          <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Little Red Bank has moved</title>
+          <meta http-equiv="refresh" content="0; url=$SITE_MOVED_TO">
+          <style>body{font:16px/1.5 system-ui,sans-serif;background:#17151b;color:#f4eadb;display:grid;place-items:center;min-height:100vh;margin:0}a{color:#d65343}</style>
+          </head><body><main><h1>Little Red Bank has moved</h1>
+          <p>Taking you to <a href="$SITE_MOVED_TO">$SITE_MOVED_TO</a>. Sign in again there with the same username and password.</p></main>
+          <script>location.replace("$SITE_MOVED_TO" + location.search + location.hash)</script>
+          </body></html>
+          HTML
+          cp dist/index.html dist/404.html
+          echo "Pages site now forwards to $SITE_MOVED_TO"
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
