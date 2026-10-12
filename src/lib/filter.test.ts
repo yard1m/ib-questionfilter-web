@@ -105,3 +105,45 @@ describe('required and secondary topics', () => {
   });
 });
 
+describe('HL-only shared-question option', () => {
+  const sl = catalog.questions.find(q => q.document.level === 'SL')!;
+  const shared = {
+    ...sl,
+    grouping: 'shared',
+    references: [{ sourceFile: 'Synthetic_physics_paper_2_HL_2019.pdf', question: 'Q1', paper: 'Paper 2', page: 'Page 3' }],
+  };
+  const slOnly = { ...sl, id: 'sl-only', references: [] };
+  const questions = [...catalog.questions.filter(q => q.document.level === 'HL'), shared, slOnly];
+  const hl = { ...defaultFilters(physics), levels: new Set(['HL']), includeSlHlShared: true };
+
+  it('starts off and preserves broad level filtering while off', () => {
+    expect(defaultFilters(physics).includeSlHlShared).toBe(false);
+    expect(ids(filterQuestions(questions, 'physics', { ...hl, includeSlHlShared: false })))
+      .toEqual(['physics-p1-hl-2024::Q1', 'physics-p1-hl-2024::Q2']);
+  });
+
+  it('adds only audited SL canonical questions with an HL occurrence, once', () => {
+    expect(ids(filterQuestions(questions, 'physics', hl)))
+      .toEqual(['physics-p1-hl-2024::Q1', 'physics-p1-hl-2024::Q2', shared.id]);
+    expect(filterQuestions([{ ...shared, references: [...shared.references, ...shared.references] }], 'physics', hl))
+      .toHaveLength(1);
+    expect(filterQuestions([{ ...shared, references: [{ ...shared.references[0], sourceFile: 'Synthetic_SHL_2019.pdf' }] }], 'physics', hl))
+      .toEqual([]);
+  });
+
+  it('does not bypass year, session, paper, topic or subject filters', () => {
+    for (const facet of [
+      { years: new Set([2024]) }, { sessions: new Set(['May']) },
+      { papers: new Set(['Paper 1A']) }, { topics: new Set(['Gravitation']) },
+    ]) expect(filterQuestions([shared], 'physics', { ...hl, ...facet })).toEqual([]);
+    expect(filterQuestions([shared], 'chemistry', hl)).toEqual([]);
+  });
+
+  it('has no effect for SL-only or both-level selection', () => {
+    for (const levels of [new Set(['SL']), new Set(['HL', 'SL'])]) {
+      expect(ids(filterQuestions(questions, 'physics', { ...hl, levels })))
+        .toEqual(ids(filterQuestions(questions, 'physics', { ...hl, levels, includeSlHlShared: false })));
+    }
+  });
+});
+

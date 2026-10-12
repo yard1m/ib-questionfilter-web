@@ -75,6 +75,7 @@ legend { font-size: 12px; font-weight: 650; color: var(--muted); padding: 0 0 6p
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; cursor: pointer; padding: 2px 0; }
 .check input { margin-top: 3px; flex: none; }
 .check small { display: block; color: var(--muted); font-size: 11.5px; }
+.level-suboption { margin: 2px 0 6px 22px; }
 .check.switch { margin-bottom: 4px; }
 .check.inline { align-items: center; }
 .topics { display: grid; gap: 1px; margin-top: 8px; }

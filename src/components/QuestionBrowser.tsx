@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Catalog, Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import { exportDetail } from '../lib/activity';
@@ -6,7 +6,7 @@ import { exportDetail } from '../lib/activity';
 /** "Paper 1 HL TZ2 · May 2024" for the admin activity log. */
 const paperOf = (q: Question) => questionTitle(q).split(' · ').slice(1).join(' · ');
 import {
-  cycleTopic, defaultFilters, filterQuestions, pruneSelection, setTopicMode, toggleFacet, topicState, type Filters, type TopicState,
+  cycleTopic, defaultFilters, filterQuestions, isHlOnly, pruneSelection, setTopicMode, toggleFacet, topicState, type Filters, type TopicState,
 } from '../lib/filter';
 import type { DesignMode } from '../lib/design';
 import { DesignToggle } from './DesignToggle';
@@ -248,8 +248,17 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
       <fieldset>
         <legend>{legend}</legend>
         {values.map((value) => (
-          <ToggleRow key={String(value)} label={String(value)} checked={chosenValues.has(value)}
-            onChange={() => update({ ...filters, [key]: toggleFacet(chosenValues, value) })} />
+          <Fragment key={String(value)}>
+            <ToggleRow label={String(value)} checked={chosenValues.has(value)}
+              onChange={() => update({ ...filters, [key]: toggleFacet(chosenValues, value),
+                ...(key === 'levels' ? { includeSlHlShared: false } : {}) })} />
+            {key === 'levels' && value === 'HL' && isHlOnly(filters) && (
+              <div className="level-suboption">
+                <ToggleRow label="Include SL-HL shared questions" checked={filters.includeSlHlShared}
+                  onChange={() => update({ ...filters, includeSlHlShared: !filters.includeSlHlShared })} />
+              </div>
+            )}
+          </Fragment>
         ))}
       </fieldset>
     ) : null

@@ -33,6 +33,12 @@ async function scenario(mode) {
     import { fixtureCatalog } from '/src/lib/fixtures.ts';
     import '/src/styles.css';
     window.rawFixture = fixtureCatalog();
+    if (${JSON.stringify(mode)} === 'hl-shared') {
+      const shared = window.rawFixture.questions[2];
+      window.rawFixture.questions.push({ ...shared, id: 'synthetic-sl-only', label: 'Q2', order: 1 });
+      shared.grouping = 'shared';
+      shared.refs = [['Synthetic_physics_paper_2_HL_2019.pdf', 'Q1', 'Paper 2', 'Page 3']];
+    }
     const catalog = parseCatalog(window.rawFixture);
     window.activity = []; window.downloads = []; window.signOuts = []; window.builderSignals = [];
     window.pdfMode = 'ok'; window.pendingPdfs = [];
@@ -90,6 +96,35 @@ async function scenario(mode) {
 }
 
 describe('recovery and cancellable UI', () => {
+  it('shows an HL sub-checkbox only for HL alone and prunes shared selections when disabled', async () => {
+    const page = await scenario('hl-shared');
+    try {
+      const option = page.getByRole('checkbox', { name: 'Include SL-HL shared questions', exact: true });
+      expect(await option.count()).toBe(0);
+      await page.getByRole('checkbox', { name: 'SL', exact: true }).click();
+      await option.waitFor();
+      expect(await option.isChecked()).toBe(false);
+      expect(await page.locator('.qcard').count()).toBe(2);
+      await option.click();
+      expect(await page.locator('.qcard').count()).toBe(3);
+      expect(await page.locator('[data-question-id="synthetic-sl-only"]').count()).toBe(0);
+      await page.setViewportSize({ width: 390, height: 780 });
+      for (const design of ['classic', 'archive']) {
+        await page.evaluate(design => { document.documentElement.dataset.design = design; }, design);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.locator('[data-question-id="physics-p2-sl-2019::Q1"] input[type=checkbox]').check();
+      await option.click();
+      expect(await page.locator('.qcard').count()).toBe(2);
+      expect(await page.getByRole('button', { name: 'Clear selection', exact: true }).isDisabled()).toBe(true);
+      await option.click();
+      await page.getByRole('checkbox', { name: 'SL', exact: true }).click();
+      expect(await option.count()).toBe(0);
+      await page.getByRole('checkbox', { name: 'SL', exact: true }).click();
+      expect(await option.isChecked()).toBe(false);
+    } finally { await page.close(); }
+  }, 30000);
   it('facet controls filter exact canonical IDs, not shared-source reference titles', async () => {
     const page = await scenario('export');
     try {

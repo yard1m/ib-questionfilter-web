@@ -425,6 +425,26 @@ async function main() {
         requireCondition(await page.locator('.qcard').count() > 0, 'no question cards');
         return `${await page.locator('.qcard').count()} cards`;
       });
+      await runCheck(`${subject.name} HL option includes audited SL-HL shared rows once`, async () => {
+        await page.getByRole('checkbox', { name: 'SL', exact: true }).click();
+        const option = page.getByRole('checkbox', { name: 'Include SL-HL shared questions', exact: true });
+        requireCondition(!await option.isChecked(), 'shared option must start off');
+        const ordinary = await assertFacetIds(page, local, subject, 'level', 'HL');
+        const shared = subject.questions.filter(question => local.catalog.documents[question.doc].level === 'SL'
+          && question.refs?.some(ref => /(?:^|_)HL(?:_|\.pdf$)/i.test(ref[0])));
+        requireCondition(shared.length > 0, 'no audited SL-HL shared fixture');
+        const expected = subject.questions.filter(question => local.catalog.documents[question.doc].level === 'HL'
+          || shared.includes(question)).map(question => question.id).sort();
+        await option.click();
+        await page.waitForFunction(expected => {
+          const actual = [...document.querySelectorAll('.qcard')].map(card => card.dataset.questionId).sort();
+          return JSON.stringify(actual) === JSON.stringify(expected);
+        }, expected, { timeout: 10000 });
+        requireCondition(new Set(expected).size === expected.length, 'canonical question repeated');
+        await page.getByRole('checkbox', { name: 'SL', exact: true }).click();
+        requireCondition(await option.count() === 0, 'option visible with both levels selected');
+        return `${ordinary} HL + ${shared.length} shared; one row per canonical question`;
+      });
     }
 
     const physics = subjectById.get('physics');

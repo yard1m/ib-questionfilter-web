@@ -8,6 +8,8 @@ export interface Filters {
   years: Set<number>;
   sessions: Set<string>;
   levels: Set<string>;
+  /** Include SL canonical rows with an audited HL occurrence, only when HL alone is selected. */
+  includeSlHlShared: boolean;
   papers: Set<string>;
   topics: Set<string>;
   /** Show only questions whose topics all lie within the selected topics. */
@@ -27,6 +29,7 @@ export function defaultFilters(subject: Subject): Filters {
     years: new Set(subject.years),
     sessions: new Set(subject.sessions),
     levels: new Set(subject.levels),
+    includeSlHlShared: false,
     papers: new Set(subject.papers),
     topics: new Set(),
     onlySelectedTopics: false,
@@ -103,13 +106,23 @@ export function matchesTopics(question: Question, filters: Filters): boolean {
   return false;
 }
 
+export function isHlOnly(filters: Filters): boolean {
+  return filters.levels.size === 1 && filters.levels.has('HL');
+}
+
+function matchesLevel(question: Question, filters: Filters): boolean {
+  if (filters.levels.has(question.document.level)) return true;
+  return filters.includeSlHlShared && isHlOnly(filters) && question.document.level === 'SL'
+    && question.references.some(ref => /(?:^|_)HL(?:_|\.pdf$)/i.test(ref.sourceFile));
+}
+
 export function filterQuestions(questions: Question[], subjectId: string, filters: Filters): Question[] {
   return questions
     .filter((q) =>
       q.subject === subjectId &&
       filters.years.has(q.document.year) &&
       filters.sessions.has(q.document.session) &&
-      filters.levels.has(q.document.level) &&
+      matchesLevel(q, filters) &&
       filters.papers.has(q.document.paper) &&
       matchesTopics(q, filters))
     .sort(displayOrder);
