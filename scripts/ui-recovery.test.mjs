@@ -59,23 +59,33 @@ async function scenario(mode) {
   ` }));
   await page.route('**/src/lib/render.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: `
     export function openForRendering() { return { promise: Promise.resolve({}), destroy: async () => {} }; }
+    export function renderWorkers() { return { open: openForRendering, destroy() {} }; }
     export async function renderSlice() {
       if (window.renderMode === 'error') throw Error('render failed');
       return document.createElement('canvas');
     }
   ` }));
   await page.route('**/src/lib/sliceContent.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: `
-    export function pdfContentCheck() { return { hasContent: async () => true, contentBox: async () => null, close: async () => {} }; }
+    export function pdfContentCheck() { return { hasContent: async () => true, contentBox: async () => null, prefetch: async () => {}, close: async () => {} }; }
   ` }));
+  // The page plan is real; cutting pages locally is not (the synthetic PDFs are a single byte).
+  await page.route('**/src/lib/exportPlan.ts*', (route) => route.request().url().includes('real') ? route.continue() : route.fulfill({ contentType: 'text/javascript', body: `
+    export { pagePlan } from '/src/lib/exportPlan.ts?real';
+    export async function subsetPdf(bytes) { return bytes; }
+  ` }));
+  // Both builders run at once, like the real ones; each waits for its source file, then for the test.
   await page.route('**/src/lib/exportPdf.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: `
-    async function build(options) {
+    window.releases = [];
+    window.releaseBuild = () => window.releases.shift()?.();
+    async function build(options, load, key) {
       window.builderSignals.push(options?.signal);
-      await new Promise(resolve => window.releaseBuild = resolve);
+      if (key) await load(key);
+      await new Promise(resolve => window.releases.push(resolve));
       return { bytes: new Uint8Array([1]), exported: window.builderExported ?? 1, pages: 1, skipped: [] };
     }
-    export const exportQuestionsClean = (q, load, title, options) => build(options);
-    export const exportQuestions = (q, load, title, stamp, content, signal) => build({ signal });
-    export const exportMarkscheme = (q, load, title, stamp, content, box, signal) => build({ signal });
+    export const exportQuestionsClean = (q, load, title, options) => build(options, load, q[0]?.document.paperKey);
+    export const exportQuestions = (q, load, title, stamp, content, signal) => build({ signal }, load, q[0]?.document.paperKey);
+    export const exportMarkscheme = (q, load, title, stamp, content, box, signal) => build({ signal }, load, q.find(x => x.answerSlices)?.document.markschemeKey);
     export const decorateExport = async bytes => bytes;
   ` }));
   await page.route('**/*supabase*supabase-js*', (route) => route.fulfill({ contentType: 'text/javascript', body: `
@@ -202,14 +212,12 @@ describe('recovery and cancellable UI', () => {
         if (layout === 'original') await page.getByRole('checkbox', { name: 'Clean layout', exact: true }).uncheck();
         await page.locator('.qcard input[type="checkbox"]').first().check();
         await page.getByRole('button', { name: 'Export 1 question', exact: true }).click();
-        await page.waitForFunction(() => !!window.releaseBuild);
-        if (phase === 'markscheme') {
-          await page.evaluate(() => { const release = window.releaseBuild; window.releaseBuild = null; release(); });
-          await page.waitForFunction(() => window.builderSignals.length === 2 && !!window.releaseBuild);
-        }
+        await page.waitForFunction(() => window.builderSignals.length === 2 && window.releases?.length === 2);
+        // Questions finished, markscheme still building (or both still building).
+        if (phase === 'markscheme') await page.evaluate(() => window.releaseBuild());
         await page.getByRole('button', { name: 'Cancel', exact: true }).click();
         expect(await page.evaluate(() => window.builderSignals.every(signal => signal?.aborted))).toBe(true);
-        await page.evaluate(() => window.releaseBuild());
+        await page.evaluate(() => { while (window.releases.length) window.releaseBuild(); });
         await page.getByText('Export cancelled.', { exact: true }).waitFor();
         expect(await page.evaluate(() => window.downloads)).toEqual([]);
         expect(await page.evaluate(() => window.activity)).toEqual([]);
@@ -225,7 +233,7 @@ describe('recovery and cancellable UI', () => {
           window.pdfMode = 'controlled'; window.downloadTimers = new Map();
           const set = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window);
           window.setTimeout = (callback, ms, ...args) => {
-            if (ms !== 90000) return set(callback, ms, ...args);
+            if (ms !== 240000) return set(callback, ms, ...args);
             const id = set(() => {}, 60000); window.downloadTimers.set(id, callback); return id;
           };
           window.clearTimeout = id => { window.downloadTimers.delete(id); clear(id); };
@@ -257,10 +265,8 @@ describe('recovery and cancellable UI', () => {
       await page.evaluate(() => { window.builderExported = 0; });
       await page.locator('.qcard input[type="checkbox"]').first().check();
       await page.getByRole('button', { name: 'Export 1 question', exact: true }).click();
-      await page.waitForFunction(() => !!window.releaseBuild);
-      await page.evaluate(() => { const release = window.releaseBuild; window.releaseBuild = null; release(); });
-      await page.waitForFunction(() => window.builderSignals.length === 2 && !!window.releaseBuild);
-      await page.evaluate(() => window.releaseBuild());
+      await page.waitForFunction(() => window.releases?.length === 2);
+      await page.evaluate(() => { while (window.releases.length) window.releaseBuild(); });
       await page.waitForFunction(() => window.activity.length === 2);
       expect(await page.evaluate(() => window.activity.map(([kind, subject, items]) => [kind, subject, items]))).toEqual([['export', 'physics', 0], ['markscheme', 'physics', 0]]);
     } finally { await page.close(); }
