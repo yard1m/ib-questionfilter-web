@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Question } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
+import { slicePages, type LoadPages } from '../lib/slicePages';
 
 /** Shows only the chosen question: its slices, rendered from the private source paper. */
-export function Preview({ question, loadPdf, onClose }: {
+export function Preview({ question, loadPdf, loadPages, onClose }: {
   question: Question;
   loadPdf: (key: string) => Promise<Uint8Array>;
+  loadPages?: LoadPages;
   onClose: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -25,7 +27,7 @@ export function Preview({ question, loadPdf, onClose }: {
     (async () => {
       try {
         const { openForRendering, renderSlice } = await import('../lib/render');
-        const bytes = await loadPdf(question.document.paperKey);
+        const { bytes, slices } = await slicePages(question.document.paperKey, question.questionSlices, loadPdf, loadPages);
         const opened = openForRendering(bytes);
         destroy = () => { void opened.destroy(); };
         const doc = await opened.promise;
@@ -34,11 +36,11 @@ export function Preview({ question, loadPdf, onClose }: {
         const width = Math.min(820, target.clientWidth || 820);
         const ratio = Math.min(window.devicePixelRatio || 1, 2.5);
         target.replaceChildren();
-        for (const slice of question.questionSlices) {
+        for (const [i, slice] of slices.entries()) {
           const canvas = await renderSlice(doc, slice, width, ratio);
           if (cancelled) return;
           canvas.setAttribute('role', 'img');
-          canvas.setAttribute('aria-label', `${question.label}, page ${slice.page + 1}`);
+          canvas.setAttribute('aria-label', `${question.label}, page ${question.questionSlices[i].page + 1}`);
           target.appendChild(canvas);
         }
         if (!cancelled) setState('ready');
@@ -47,7 +49,7 @@ export function Preview({ question, loadPdf, onClose }: {
       }
     })();
     return () => { cancelled = true; destroy?.(); };
-  }, [question, loadPdf]);
+  }, [question, loadPdf, loadPages]);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>

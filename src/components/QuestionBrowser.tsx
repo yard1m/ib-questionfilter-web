@@ -14,7 +14,9 @@ import { Preview } from './Preview';
 import { TopicStats } from './TopicStats';
 import { Practice } from './Practice';
 
-type LoadPdf = (key: string) => Promise<Uint8Array>;
+import type { LoadPages, LoadPdf } from '../lib/slicePages';
+import { matchesSearch, searchIndex, searchTerms, type SearchTexts } from '../lib/search';
+import { MAX_SAVED_QUESTIONS, type SavedSelection, type SavedSelectionStore } from '../lib/savedSelections';
 
 function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
@@ -52,14 +54,37 @@ function download(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+/** Settles like `work`, but rejects with Error('timeout') after `ms`, or with the abort reason. */
+function limited<T>(work: () => Promise<T>, ms: number, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const finish = (error: unknown, value?: T) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (error !== undefined) reject(error);
+      else resolve(value as T);
+    };
+    const onAbort = () => finish(signal.reason);
+    const timer = setTimeout(() => finish(new Error('timeout')), ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else Promise.resolve().then(work).then((value) => finish(undefined, value), (error) => finish(error ?? new Error('Download failed')));
+  });
+}
+
 function formatSeconds(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
-export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity, isAdmin = false }: {
+export function QuestionBrowser({ catalog, loadPdf, loadPages, loadSearch, savedSelections, account, onSignOut, designMode, onDesignModeChange, accountTools, stamp, onActivity, isAdmin = false }: {
   catalog: Catalog;
   loadPdf: LoadPdf;
+  /** Fetches just some pages of a paper; exports fall back to whole papers without it. */
+  loadPages?: LoadPages;
+  /** Downloads the question texts for word search (first search only). */
+  loadSearch?: () => Promise<SearchTexts>;
+  /** Named question sets kept with the account. */
+  savedSelections?: SavedSelectionStore;
   account: string;
   onSignOut: () => void;
   designMode: DesignMode;
@@ -93,12 +118,11 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     setCleanLayout(clean);
     try { window.localStorage.setItem('ibqf.exportLayout', clean ? 'clean' : 'original'); } catch { /* per-browser convenience only */ }
   };
-  const [progress, setProgress] = useState<{ stage: string; done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ stage: string; done: number; total: number; detail: string } | null>(null);
   const cancelRef = useRef<AbortController | null>(null);
   useEffect(() => () => { cancelRef.current?.abort(); }, []);
-  // Timing for the progress panel: when the export and the current stage started.
+  // Timing for the progress panel: when the export started.
   const startedRef = useRef(0);
-  const stageStartedRef = useRef(0);
   const [now, setNow] = useState(() => Date.now());
   const [preview, setPreview] = useState<Question | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,7 +135,20 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
   const [filtersOpen, setFiltersOpen] = useState(false);
   const closePreview = useCallback(() => setPreview(null), []);
 
-  const visible = useMemo(() => filterQuestions(catalog.questions, subject.id, filters), [catalog, subject, filters]);
+  const filtered = useMemo(() => filterQuestions(catalog.questions, subject.id, filters), [catalog, subject, filters]);
+  // Word search narrows what is shown, but never drops ticked questions: a student can search, tick,
+  // and search again. Without the downloaded texts it still matches labels, papers and topics.
+  const [query, setQuery] = useState('');
+  const [searchTexts, setSearchTexts] = useState<SearchTexts | null>(null);
+  const [searchState, setSearchState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const loadSearchTexts = useCallback(() => {
+    if (!loadSearch || searchState === 'loading' || searchState === 'ready') return;
+    setSearchState('loading');
+    loadSearch().then((texts) => { setSearchTexts(texts); setSearchState('ready'); }, () => setSearchState('error'));
+  }, [loadSearch, searchState]);
+  const index = useMemo(() => searchIndex(catalog.questions, searchTexts ?? {}), [catalog, searchTexts]);
+  const terms = useMemo(() => searchTerms(query), [query]);
+  const visible = useMemo(() => (terms.length ? filtered.filter((q) => matchesSearch(index.get(q.id), terms)) : filtered), [filtered, index, terms]);
 
   const update = useCallback((next: Filters) => {
     setFilters(next);
@@ -125,7 +162,52 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     setSubjectId(id);
     setFilters(defaultFilters(next));
     setSelected(new Set());
+    setQuery('');
     setMessage(null);
+  }
+
+  // Saved sets: loading one resets the filters and search so every saved question is in scope.
+  const [showSaved, setShowSaved] = useState(false);
+  const [sets, setSets] = useState<SavedSelection[] | null>(null);
+  const [setName, setSetName] = useState('');
+  const [setsMessage, setSetsMessage] = useState<string | null>(null);
+  const refreshSets = useCallback(() => {
+    if (!savedSelections) return;
+    savedSelections.list().then(setSets, () => setSetsMessage('Saved sets could not be loaded. Try again.'));
+  }, [savedSelections]);
+  useEffect(() => { if (showSaved && sets === null) refreshSets(); }, [showSaved, sets, refreshSets]);
+  const subjectSets = (sets ?? []).filter((s) => s.subject === subject.id);
+  const questionsOf = (set: SavedSelection) => {
+    const ids = new Set(set.questionIds);
+    return filterQuestions(catalog.questions, subject.id, defaultFilters(subject)).filter((q) => ids.has(q.id));
+  };
+  async function saveSet() {
+    if (!savedSelections || !chosen.length) return;
+    const name = setName.trim() || `Set ${subjectSets.length + 1}`;
+    setSetsMessage(null);
+    try {
+      await savedSelections.save(subject.id, name, chosen.map((q) => q.id));
+      setSetName('');
+      setSetsMessage(`Saved “${name}” (${Math.min(chosen.length, MAX_SAVED_QUESTIONS)} questions).`);
+      refreshSets();
+    } catch {
+      setSetsMessage('The set could not be saved. Try again.');
+    }
+  }
+  function loadSet(set: SavedSelection): Question[] {
+    const list = questionsOf(set);
+    setFilters(defaultFilters(subject));
+    setQuery('');
+    setSelected(new Set(list.map((q) => q.id)));
+    setMessage(null);
+    setSetsMessage(list.length < set.questionIds.length
+      ? `Loaded “${set.name}”: ${list.length} of ${set.questionIds.length} questions are still in the bank.`
+      : `Loaded “${set.name}” (${list.length} questions).`);
+    return list;
+  }
+  async function deleteSet(set: SavedSelection) {
+    if (!savedSelections || !window.confirm(`Delete the saved set “${set.name}”?`)) return;
+    try { await savedSelections.remove(set.id); refreshSets(); } catch { setSetsMessage('The set could not be deleted. Try again.'); }
   }
 
   function toggleQuestion(id: string) {
@@ -138,93 +220,101 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
     setMessage(null);
   }
 
-  const chosen = visible.filter((q) => selected.has(q.id));
+  const chosen = filtered.filter((q) => selected.has(q.id));
+  const hiddenChosen = chosen.length - visible.filter((q) => selected.has(q.id)).length;
   const answers = chosen.filter((q) => q.answerSlices).length;
   const pagesToCompile = new Set(chosen.flatMap((q) => q.questionSlices.map((slice) => `${q.id}:${slice.page}`))).size;
 
-  async function exportSelection() {
-    if (!chosen.length || busy) return;
+  async function exportSelection(list: Question[] = chosen) {
+    if (!list.length || busy) return;
     const controller = new AbortController();
     cancelRef.current = controller;
     const { signal } = controller;
     setBusy(true);
     setMessage(null);
     try {
-      const { exportMarkscheme, exportQuestions, exportQuestionsClean, decorateExport } = await import('../lib/exportPdf');
+      const [{ exportMarkscheme, exportQuestions, exportQuestionsClean }, { pagePlan, subsetPdf }, { renderWorkers }, { pdfContentCheck }] = await Promise.all([
+        import('../lib/exportPdf'), import('../lib/exportPlan'), import('../lib/render'), import('../lib/sliceContent'),
+      ]);
       signal.throwIfAborted();
-      // Fetch every paper the export needs up front, several at a time; the builders then read
-      // them from the in-memory cache. One at a time took minutes for a large selection.
-      const keys = [...new Set(chosen.flatMap((q) => [
-        q.document.paperKey,
-        ...(withMarkscheme && q.answerSlices && q.document.markschemeKey ? [q.document.markschemeKey] : []),
-      ]))];
-      let done = 0;
+      // Fetch only the pages the export uses, a few files at a time in the order the builders need
+      // them. Building starts at once and waits only for pages it has not received yet.
+      const plan = pagePlan(list, withMarkscheme);
+      const counts = { files: 0, questions: 0, answers: 0 };
+      const totals = { files: plan.files.length, questions: list.length, answers: withMarkscheme ? list.length : 0 };
+      const report = () => setProgress({
+        stage: counts.files < totals.files ? 'Downloading pages' : 'Building PDFs',
+        done: counts.files + counts.questions + counts.answers,
+        total: totals.files + totals.questions + totals.answers,
+        detail: [`${counts.files}/${totals.files} files`, `${counts.questions}/${totals.questions} questions`,
+          ...(totals.answers ? [`${counts.answers}/${totals.answers} answers`] : [])].join(' · '),
+      });
       startedRef.current = Date.now();
-      stageStartedRef.current = Date.now();
-      setProgress({ stage: 'Downloading papers', done: 0, total: keys.length });
-      const queue = [...keys];
-      const worker = async () => {
-        for (let key = queue.shift(); key; key = queue.shift()) {
-          signal.throwIfAborted();
-          await new Promise<void>((resolve, reject) => {
-            let settled = false;
-            const finish = (error?: unknown) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timer);
-              signal.removeEventListener('abort', onAbort);
-              if (error !== undefined) reject(error);
-              else resolve();
-            };
-            const onAbort = () => finish(signal.reason);
-            const timer = setTimeout(() => finish(new Error('timeout')), 90_000);
-            signal.addEventListener('abort', onAbort, { once: true });
-            Promise.resolve().then(() => loadPdf(key)).then(() => finish(), finish);
-          });
-          signal.throwIfAborted();
-          done += 1;
-          setProgress({ stage: 'Downloading papers', done, total: keys.length });
+      report();
+      const settle = new Map<string, { resolve: (bytes: Uint8Array) => void; reject: (error: unknown) => void }>();
+      const ready = new Map<string, Promise<Uint8Array>>();
+      for (const file of plan.files) {
+        const bytes = new Promise<Uint8Array>((resolve, reject) => settle.set(file.subsetKey, { resolve, reject }));
+        bytes.catch(() => undefined); // a failure is reported by whichever builder needs the file
+        ready.set(file.subsetKey, bytes);
+      }
+      signal.addEventListener('abort', () => { for (const { reject } of settle.values()) reject(signal.reason); }, { once: true });
+      const load = (key: string) => ready.get(key) ?? Promise.reject(new Error('Unplanned export source'));
+      const queue = [...plan.files];
+      const downloader = async () => {
+        for (let file = queue.shift(); file && !signal.aborted; file = queue.shift()) {
+          const { key, pages } = file;
+          const { resolve, reject } = settle.get(file.subsetKey)!;
+          try {
+            // Whole papers cut down here are the fallback when the server cannot send the pages.
+            resolve(await limited(async () => {
+              if (loadPages) {
+                try { return await loadPages(key, pages); } catch { signal.throwIfAborted(); }
+              }
+              return subsetPdf(await loadPdf(key), pages);
+            }, 240_000, signal));
+            counts.files += 1;
+            report();
+          } catch (error) {
+            reject(error);
+          }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(6, keys.length) }, worker));
-      signal.throwIfAborted();
-      stageStartedRef.current = Date.now();
-      setProgress({ stage: 'Building PDFs', done: keys.length, total: keys.length });
+      void Promise.all(Array.from({ length: Math.min(4, plan.files.length) }, downloader));
+      // Content boxes are worked out a few pages at a time, on shared pdf.js workers, while the
+      // pages arrive; the builders then mostly read finished results.
+      const concurrency = Math.max(2, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
+      const workers = renderWorkers(concurrency);
+      const content = pdfContentCheck(load, workers.open, signal);
+      void content.prefetch(plan.slices, { concurrency, boxes: cleanLayout });
       const base = `${subject.name} Filtered Questions`;
-      const [{ openForRendering }, { pdfContentCheck }] = await Promise.all([import('../lib/render'), import('../lib/sliceContent')]);
-      signal.throwIfAborted();
-      const content = pdfContentCheck(loadPdf, openForRendering);
       let text: string;
       try {
-        const exportedAt = new Date();
-        const questions = cleanLayout
-          ? await exportQuestionsClean(chosen, loadPdf, base, { subject: subject.name, stamp, exportedAt, contentBox: content.contentBox, admin: unmarked, siteUrl, signal })
-          : await exportQuestions(chosen, loadPdf, base, stamp, content.hasContent, signal);
+        const decoration = { subject: subject.name, stamp, exportedAt: new Date(), admin: unmarked, siteUrl, signal };
+        const onQuestions = (done: number) => { counts.questions = done; report(); };
+        const onAnswers = (done: number) => { counts.answers = done; report(); };
+        const [questions, markscheme] = await Promise.all([
+          cleanLayout
+            ? exportQuestionsClean(plan.questions, load, base, { ...decoration, contentBox: content.contentBox, onProgress: onQuestions })
+            : exportQuestions(plan.questions, load, base, stamp, content.hasContent, signal, onQuestions),
+          withMarkscheme
+            ? exportMarkscheme(plan.questions, load, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent, cleanLayout ? content.contentBox : undefined, signal,
+              { onProgress: onAnswers, decorate: cleanLayout ? decoration : undefined })
+            : Promise.resolve(null),
+        ]);
         signal.throwIfAborted();
-        const downloads = [{ bytes: questions.bytes, filename: `${base}.pdf` }];
-        let exportedAnswers: number | null = null;
+        download(questions.bytes, `${base}.pdf`);
         text = `Exported ${questions.exported} question${questions.exported === 1 ? '' : 's'} (${questions.pages} pages).`;
-        if (withMarkscheme) {
-          const markscheme = await exportMarkscheme(chosen, loadPdf, `${base} Markscheme`, cleanLayout ? undefined : stamp, content.hasContent, cleanLayout ? content.contentBox : undefined, signal);
-          signal.throwIfAborted();
-          const markschemeBytes = cleanLayout
-            ? await decorateExport(markscheme.bytes, `${base} Markscheme`, { subject: subject.name, stamp, exportedAt, admin: unmarked, siteUrl, signal })
-            : markscheme.bytes;
-          signal.throwIfAborted();
-          downloads.push({ bytes: markschemeBytes, filename: `${base} Markscheme.pdf` });
-          exportedAnswers = markscheme.exported;
+        if (markscheme) {
+          download(markscheme.bytes, `${base} Markscheme.pdf`);
           text += ` Markscheme: ${markscheme.exported} answer${markscheme.exported === 1 ? '' : 's'}`;
           text += markscheme.skipped.length ? `, ${markscheme.skipped.length} listed for manual review.` : '.';
         }
-        signal.throwIfAborted();
-        for (const file of downloads) {
-          signal.throwIfAborted();
-          download(file.bytes, file.filename);
-        }
-        onActivity?.('export', subject.id, questions.exported, exportDetail(chosen.map(paperOf)));
-        if (exportedAnswers !== null) onActivity?.('markscheme', subject.id, exportedAnswers, exportDetail(chosen.map(paperOf)));
+        onActivity?.('export', subject.id, questions.exported, exportDetail(list.map(paperOf)));
+        if (markscheme) onActivity?.('markscheme', subject.id, markscheme.exported, exportDetail(list.map(paperOf)));
       } finally {
         await content.close();
+        workers.destroy();
       }
       signal.throwIfAborted();
       setMessage({ kind: 'ok', text: `${text} Took ${formatSeconds(Date.now() - startedRef.current)}.` });
@@ -354,6 +444,18 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         </aside>
 
         <main>
+          <div className="search-bar" role="search">
+            <input type="search" value={query} placeholder="Search question text, e.g. Hess's law, projectile, “standing wave”"
+              aria-label="Search question text" onFocus={loadSearchTexts}
+              onChange={(e) => { setQuery(e.target.value); loadSearchTexts(); }} />
+            {terms.length > 0 && (
+              <span className="muted small" role="status">
+                {searchState === 'loading' ? 'Loading question text… (matching titles and topics meanwhile)'
+                  : searchState === 'error' ? 'Question text could not be loaded; matching titles and topics only.'
+                  : `${visible.length} match${visible.length === 1 ? '' : 'es'}`}
+              </span>
+            )}
+          </div>
           <section className="archive-stats" aria-label="Selection summary">
             <div><strong>{visible.length}</strong><span>IN SCOPE</span></div>
             <div><strong>{chosen.length}</strong><span>SELECTED</span></div>
@@ -366,13 +468,18 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                 <strong>{visible.length} matching question{visible.length === 1 ? '' : 's'}</strong>
                 <span className="muted small">
                   {chosen.length} selected{chosen.length ? ` · ${answers} markscheme answer${answers === 1 ? '' : 's'}` : ''}
+                  {hiddenChosen > 0 ? ` · ${hiddenChosen} hidden by the search` : ''}
                 </span>
               </div>
               <div className="toolbar-actions">
                 <button type="button" className="btn secondary" disabled={!visible.length}
-                  onClick={() => setSelected(new Set(visible.map((q) => q.id)))}>Select filtered</button>
+                  onClick={() => setSelected((prev) => new Set([...prev, ...visible.map((q) => q.id)]))}>{terms.length ? 'Select results' : 'Select filtered'}</button>
                 <button type="button" className="btn secondary" disabled={!chosen.length}
                   onClick={() => setSelected(new Set())}>Clear selection</button>
+                {savedSelections && (
+                  <button type="button" className="btn secondary" aria-expanded={showSaved}
+                    onClick={() => setShowSaved((open) => !open)}>{showSaved ? 'Hide saved sets' : 'Saved sets'}</button>
+                )}
                 <button type="button" className="btn secondary" aria-expanded={showStats} disabled={!visible.length}
                   onClick={() => setShowStats((open) => !open)}>{showStats ? 'Hide topic stats' : 'Topic stats'}</button>
                 <button type="button" className="btn secondary" disabled={!visible.length}
@@ -397,46 +504,77 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
                   </label>
                 )}
               </div>
-              <button type="button" className="btn export-btn" disabled={!chosen.length || busy} onClick={exportSelection}>
-                {busy ? 'Exporting…' : chosen.length ? `Export ${chosen.length} question${chosen.length === 1 ? '' : 's'}` : 'Export PDF'}
+              <button type="button" className="btn export-btn" disabled={!chosen.length || busy} onClick={() => { void exportSelection(); }}>
+                {busy ? (progress ? `Exporting… ${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%` : 'Exporting…') : chosen.length ? `Export ${chosen.length} question${chosen.length === 1 ? '' : 's'}` : 'Export PDF'}
               </button>
             </div>
+            {busy && progress && (
+              <div className="export-progress" role="status" aria-live="polite">
+                <div className="export-progress-head">
+                  <span>{progress.stage}</span>
+                  <span>
+                    {progress.done > 0 && progress.done < progress.total
+                      ? `About ${formatSeconds(((now - startedRef.current) / progress.done) * (progress.total - progress.done))} left`
+                      : progress.done >= progress.total ? 'Saving…' : 'Starting…'}
+                    {' · '}{Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%
+                  </span>
+                </div>
+                <div className="export-progress-head muted small">
+                  <span>{progress.detail}</span>
+                  <span>Elapsed {formatSeconds(now - startedRef.current)}</span>
+                </div>
+                <div className="export-progress-track">
+                  <div className="export-progress-bar" style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }} />
+                </div>
+                <button type="button" className="link" onClick={() => { cancelRef.current?.abort('cancelled'); }}>Cancel</button>
+              </div>
+            )}
+            {message && <div className={`status ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
           </div>
+          {showSaved && savedSelections && (
+            <section className="panel saved-panel" aria-label="Saved sets">
+              <form className="saved-new" onSubmit={(e) => { e.preventDefault(); void saveSet(); }}>
+                <input type="text" value={setName} maxLength={80} onChange={(e) => setSetName(e.target.value)}
+                  placeholder={`Name, e.g. Mock ${subjectSets.length + 1}`} aria-label="Name for the saved set" />
+                <button type="submit" className="btn" disabled={!chosen.length}>
+                  Save {chosen.length ? `${chosen.length} selected` : 'selection'}
+                </button>
+              </form>
+              {setsMessage && <p className="muted small" role="status">{setsMessage}</p>}
+              {sets === null ? <p className="muted small">Loading saved sets…</p>
+                : subjectSets.length === 0 ? <p className="muted small">No saved {subject.name} sets yet. Tick some questions and save them here.</p>
+                : (
+                  <ul className="saved-list">
+                    {subjectSets.map((set) => (
+                      <li key={set.id}>
+                        <div>
+                          <strong>{set.name}</strong>
+                          <span className="muted small"> · {set.questionIds.length} question{set.questionIds.length === 1 ? '' : 's'} · {new Date(set.updatedAt).toLocaleDateString()}</span>
+                        </div>
+                        <div className="saved-actions">
+                          <button type="button" className="btn secondary" disabled={busy} onClick={() => loadSet(set)}>Load</button>
+                          <button type="button" className="btn secondary" disabled={busy} onClick={() => { void exportSelection(loadSet(set)); }}>Export</button>
+                          <button type="button" className="link" disabled={busy} onClick={() => { void deleteSet(set); }}>Delete</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </section>
+          )}
           {showStats && (
             <section className="panel stats-panel" aria-label="Topic statistics">
               <TopicStats questions={visible} />
             </section>
           )}
-          {busy && progress && (
-            <div className="export-progress" role="status" aria-live="polite">
-              <div className="export-progress-head">
-                <span>{progress.stage}</span>
-                <span>{progress.done}/{progress.total} papers · {Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%</span>
-              </div>
-              <div className="export-progress-head muted small">
-                <span>
-                  {progress.stage === 'Building PDFs'
-                    ? `Building for ${formatSeconds(now - stageStartedRef.current)}`
-                    : progress.done > 0 && progress.done < progress.total
-                      ? `About ${formatSeconds(((now - stageStartedRef.current) / progress.done) * (progress.total - progress.done))} left`
-                      : 'Estimating time…'}
-                </span>
-                <span>Elapsed {formatSeconds(now - startedRef.current)}</span>
-              </div>
-              <div className="export-progress-track">
-                <div className={`export-progress-bar${progress.stage === 'Building PDFs' ? ' building' : ''}`}
-                  style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }} />
-              </div>
-              <button type="button" className="link" onClick={() => { cancelRef.current?.abort('cancelled'); }}>Cancel</button>
-            </div>
-          )}
-          {message && <div className={`status ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
 
           {visible.length === 0 ? (
             <div className="panel empty">
               <p><strong>No matching questions</strong></p>
               <p className="muted">
-                {filters.secondaryTopics.size > 0 && filters.topics.size === 0
+                {terms.length > 0 && filtered.length > 0
+                  ? 'No question text matches the search. Try fewer or shorter words.'
+                  : filters.secondaryTopics.size > 0 && filters.topics.size === 0
                   ? '“Also allowed” topics need at least one required topic.'
                   : filters.onlySelectedTopics && filters.topics.size === 0
                   ? '"Only selected topics" needs at least one selected topic.'
@@ -475,8 +613,8 @@ export function QuestionBrowser({ catalog, loadPdf, account, onSignOut, designMo
         </main>
       </div>
 
-      {preview && <Preview question={preview} loadPdf={loadPdf} onClose={closePreview} />}
-      {practising && <Practice pool={chosen.length ? chosen : visible} loadPdf={loadPdf} onClose={closePractice} />}
+      {preview && <Preview question={preview} loadPdf={loadPdf} loadPages={loadPages} onClose={closePreview} />}
+      {practising && <Practice pool={chosen.length ? chosen : visible} loadPdf={loadPdf} loadPages={loadPages} onClose={closePractice} />}
     </>
   );
 }

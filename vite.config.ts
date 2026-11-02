@@ -29,6 +29,8 @@ export function localCorpus(webRoot = dirname(fileURLToPath(import.meta.url))): 
         catch { res.statusCode = 400; res.end(); return; }
         const key = path === '/catalog.json'
           ? manifest.catalogKey
+          : path === '/search.json'
+          ? `${manifest.prefix}/search.json`
           : path.startsWith('/object/') ? path.slice('/object/'.length) : undefined;
         const item = key ? files.get(key) : undefined;
         if (!item) { res.statusCode = 404; res.end(); return; }

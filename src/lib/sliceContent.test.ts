@@ -151,3 +151,43 @@ describe('PDF content-check lifecycle', () => {
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PDF content-check prefetch', () => {
+  /** A stand-in pdf.js document whose pages render blank and count their renders. */
+  function fakeDocument(renders: number[]) {
+    const page = (index: number) => ({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595 * scale, height: 842 * scale, convertToViewportPoint: (x: number, y: number) => [x, 842 - y] }),
+      render: () => { renders.push(index); return { promise: Promise.resolve(), cancel: () => {} }; },
+      getTextContent: async () => ({ items: [] }),
+      cleanup: () => {},
+    });
+    return { getPage: async (n: number) => page(n - 1) } as unknown as PDFDocumentProxy;
+  }
+
+  it('renders each planned page once, serves the builders from the cache and closes finished PDFs', async () => {
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) });
+    const renders: number[] = [];
+    const destroy = vi.fn(async () => {});
+    const check = pdfContentCheck(async () => new Uint8Array(), () => ({ promise: Promise.resolve(fakeDocument(renders)), destroy }));
+    const slices = [{ ...header, page: 0, lower: 100, upper: 300 }, { ...header, page: 0, lower: 400, upper: 600 }, { ...header, page: 1, lower: 100, upper: 300 }];
+    await check.prefetch(slices.map((slice) => ({ key: 'paper', slice })), { concurrency: 2, boxes: true });
+    expect(renders.sort()).toEqual([0, 1]);
+    expect(destroy).toHaveBeenCalledTimes(1);
+    const first = await Promise.all(slices.map((slice) => check.contentBox('paper', slice)));
+    expect(await Promise.all(slices.map((slice) => check.contentBox('paper', slice)))).toEqual(first);
+    expect(renders).toHaveLength(2);
+    await check.close();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks only short slices when content boxes are not needed', async () => {
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) });
+    const renders: number[] = [];
+    const check = pdfContentCheck(async () => new Uint8Array(), () => ({ promise: Promise.resolve(fakeDocument(renders)), destroy: async () => {} }));
+    await check.prefetch([{ key: 'paper', slice: { ...header, page: 0, lower: 100, upper: 600 } }, { key: 'paper', slice: { ...header, page: 1 } }], { concurrency: 2, boxes: false });
+    expect(renders).toEqual([1]); // the tall slice is always kept without a check
+    expect(await check.hasContent('paper', { ...header, page: 1 })).toBe(false);
+    expect(renders).toEqual([1]);
+    await check.close();
+  });
+});

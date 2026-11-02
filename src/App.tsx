@@ -4,6 +4,7 @@ import type { AppConfig } from './config';
 import { LoginInputError, loginEmail, signInErrorMessage } from './lib/auth';
 import type { Catalog } from './lib/catalog';
 import { AccessDeniedError, PdfMemoryCache, supabaseSource, type CorpusSource } from './lib/source';
+import { browserSelections, supabaseSelections } from './lib/savedSelections';
 import { readDesignMode, saveDesignMode, type DesignMode } from './lib/design';
 import { Login } from './components/Login';
 import { QuestionBrowser } from './components/QuestionBrowser';
@@ -199,6 +200,15 @@ export function App({ config, localSourceFactory }: {
     if (!source) return Promise.reject(new Error('Not signed in'));
     return source.loadPdf(key);
   }, [source]);
+  const loadSearch = useMemo(() => {
+    const load = source?.loadSearch?.bind(source);
+    return load ? () => load() : undefined;
+  }, [source]);
+  const savedSelections = useMemo(() => (config.localCorpus ? browserSelections() : client ? supabaseSelections(client) : undefined), [client, config.localCorpus]);
+  const loadPages = useMemo(() => {
+    const load = source?.loadPages?.bind(source);
+    return load ? (key: string, pages: number[]) => load(key, pages) : undefined;
+  }, [source]);
 
   if (!authReady) return <Centered><p className="muted" role="status">Loading…</p></Centered>;
   if (!config.localCorpus && !session) {
@@ -230,6 +240,9 @@ export function App({ config, localSourceFactory }: {
           <QuestionBrowser
             catalog={catalogState.catalog}
             loadPdf={loadPdf}
+            loadPages={loadPages}
+            loadSearch={loadSearch}
+            savedSelections={savedSelections}
             account={account}
             onSignOut={signOut}
             designMode={designMode}

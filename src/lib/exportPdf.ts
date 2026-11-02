@@ -1,4 +1,7 @@
-import { PDFDocument, PDFName, PDFString, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
+import {
+  PDFArray, PDFContentStream, PDFDocument, PDFName, PDFObjectCopier, PDFRawStream, PDFStream, PDFString, StandardFonts,
+  decodePDFRawStream, degrees, drawPage as drawPageOperators, rgb, type PDFPage, type PDFRef,
+} from 'pdf-lib';
 import type { Question, Slice } from './catalog';
 import { displayedRect, normaliseRotation, placement, userRect, type PageBox, type Rect } from './geometry';
 import type { ContentBox, HasContent } from './sliceContent';
@@ -11,7 +14,8 @@ import { questionTitle } from './catalog';
  *    desktop app's scaling rules (Scripts/export_markschemes.py). Questions without an answer
  *    slice are listed on a closing review page instead of being dropped silently. A source page
  *    without a content stream is an invalid export source and fails closed.
- * Pages are embedded as vector content, never rasterised. When a `hasContent` check is given,
+ * Pages are embedded as vector content, never rasterised; each source page is stored once however
+ * many slices show it (see RegionEmbedder). When a `hasContent` check is given,
  * short slices holding only white space or a running header are left out, so they do not export
  * as empty pages; a question always keeps at least one slice.
  */
@@ -24,6 +28,8 @@ const SMALL_SLICE_WIDTH = 180;
 const SMALL_SLICE_HEIGHT = 72;
 
 export type LoadPdf = (key: string) => Promise<Uint8Array>;
+/** Called after each question is laid out, with the number done so far. */
+export type OnProgress = (done: number) => void;
 
 export interface ExportResult {
   bytes: Uint8Array;
@@ -47,9 +53,15 @@ async function abortable<T>(signal: AbortSignal | undefined, work: () => Promise
 }
 
 // Cached PDFs and content callbacks can resolve entirely in microtasks. Yield so a UI Cancel
-// click can run even then, before continuing the next slice or decoration page.
+// click can run even then, before continuing the next slice or decoration page. scheduler.yield()
+// avoids the browser's 4 ms clamp on chained timers, which added seconds to large exports.
+function nextTask(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  return scheduler?.yield ? scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function checkpoint(signal?: AbortSignal): Promise<void> {
-  if (signal) await abortable(signal, () => new Promise((resolve) => setTimeout(resolve, 0)));
+  if (signal) await abortable(signal, nextTask);
 }
 
 async function openSource(load: LoadPdf, key: string, cache: Map<string, Promise<PDFDocument>>, signal?: AbortSignal) {
@@ -62,10 +74,82 @@ async function openSource(load: LoadPdf, key: string, cache: Map<string, Promise
   return abortable(signal, () => doc!);
 }
 
-async function embedRegion(out: PDFDocument, page: PDFPage, region: Rect) {
-  // Do not turn a blank source page into a silently empty answer/question page. The caller must
-  // receive the pdf-lib error so the export is rejected rather than producing misleading output.
-  return out.embedPage(page, region);
+const NEWLINE = Uint8Array.of(0x0a);
+
+/**
+ * Embeds page regions without copying a source page once per slice. pdf-lib's embedPage copies the
+ * page's fonts and images (and its content stream twice) for every call, which made a 60-question
+ * export 18 MB. Here each source page becomes one form XObject in the output, with its resources
+ * copied once per source document so shared fonts are stored once, and every slice is a tiny form
+ * that clips that page to the slice, exactly as embedPage(page, region) would show it.
+ */
+class RegionEmbedder {
+  private readonly copiers = new Map<PDFDocument, PDFObjectCopier>();
+  private readonly forms = new Map<PDFPage, PDFRef>();
+  constructor(private readonly out: PDFDocument) {}
+
+  /** Draws `region` (source user space) of `page` onto `target` at p, scaled by `scale`. */
+  draw(target: PDFPage, page: PDFPage, region: Rect, p: { x: number; y: number; rotate: number }, scale: number) {
+    const { context } = this.out;
+    const slice = context.register(context.stream('/P Do', {
+      Type: 'XObject', Subtype: 'Form', FormType: 1,
+      BBox: [region.left, region.bottom, region.right, region.top],
+      Matrix: [1, 0, 0, 1, -region.left, -region.bottom],
+      Resources: { XObject: { P: this.pageForm(page) } },
+    }));
+    const name = target.node.newXObject('Slice', slice);
+    target.pushOperators(...drawPageOperators(name, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate), xSkew: degrees(0), ySkew: degrees(0) }));
+  }
+
+  private pageForm(page: PDFPage): PDFRef {
+    const known = this.forms.get(page);
+    if (known) return known;
+    let copier = this.copiers.get(page.doc);
+    if (!copier) {
+      copier = PDFObjectCopier.for(page.doc.context, this.out.context);
+      this.copiers.set(page.doc, copier);
+    }
+    // Read the entries directly: normalising the page would wrap its content in q/Q streams.
+    const contents = page.node.Contents();
+    // Do not turn a blank source page into a silently empty answer/question page: reject the export.
+    if (!contents) throw new Error("Can't embed page with missing Contents");
+    const streams = contents instanceof PDFArray
+      ? Array.from({ length: contents.size() }, (_, i) => contents.lookup(i, PDFStream))
+      : [contents];
+    const { context } = this.out;
+    const media = page.getMediaBox();
+    const form = {
+      Type: 'XObject', Subtype: 'Form', FormType: 1,
+      BBox: [media.x, media.y, media.x + media.width, media.y + media.height],
+      Resources: copier.copy(page.node.Resources() ?? context.obj({})),
+    };
+    let stream: PDFStream;
+    if (streams.length === 1 && streams[0] instanceof PDFRawStream) {
+      // A single content stream keeps its compressed bytes and filters: no inflate and deflate.
+      const dict = copier.copy(streams[0].dict);
+      for (const [key, value] of Object.entries(form)) dict.set(PDFName.of(key), context.obj(value as never));
+      stream = PDFRawStream.of(dict, streams[0].contents);
+    } else {
+      stream = context.flateStream(pageContents(streams), form);
+    }
+    const ref = context.register(stream);
+    this.forms.set(page, ref);
+    return ref;
+  }
+}
+
+function pageContents(streams: PDFStream[]): Uint8Array {
+  const parts: Uint8Array[] = [];
+  for (const stream of streams) {
+    if (stream instanceof PDFRawStream) parts.push(decodePDFRawStream(stream).decode());
+    else if (stream instanceof PDFContentStream) parts.push(stream.getUnencodedContents());
+    else throw new Error('Unrecognised page content stream');
+    parts.push(NEWLINE);
+  }
+  const merged = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { merged.set(part, offset); offset += part.length; }
+  return merged;
 }
 
 /**
@@ -101,12 +185,13 @@ async function contentSlices<T extends Question['questionSlices'][number]>(slice
   return kept.length ? kept : slices.slice(0, 1);
 }
 
-export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, signal?: AbortSignal): Promise<ExportResult> {
+export async function exportQuestions(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, signal?: AbortSignal, onProgress?: OnProgress): Promise<ExportResult> {
   const out = await abortable(signal, () => PDFDocument.create());
   out.setTitle(title);
   out.setCreator('IB Question Filter');
   const sources = new Map<string, Promise<PDFDocument>>();
-  for (const question of questions) {
+  const embedder = new RegionEmbedder(out);
+  for (const [index, question] of questions.entries()) {
     await checkpoint(signal);
     const source = await openSource(load, question.document.paperKey, sources, signal);
     for (const slice of await contentSlices(question.questionSlices, question.document.paperKey, hasContent, signal)) {
@@ -115,23 +200,24 @@ export async function exportQuestions(questions: Question[], load: LoadPdf, titl
       const box = pageBox(page);
       const shown: Rect = displayedRect(box, { ...slice, left: null, right: null });
       const region = userRect(box, shown);
-      const embedded = await abortable(signal, () => embedRegion(out, page, region));
       const width = shown.right - shown.left;
       const height = shown.top - shown.bottom;
       const target = out.addPage([width, height]);
-      const p = placement(box, region, 0, 0, 1);
-      if (embedded) target.drawPage(embedded, { x: p.x, y: p.y, xScale: 1, yScale: 1, rotate: degrees(p.rotate) });
+      embedder.draw(target, page, region, placement(box, region, 0, 0, 1), 1);
     }
+    onProgress?.(index + 1);
   }
   await stampPages(out, stamp, signal);
   return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported: questions.length, skipped: [] };
 }
 
-export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, contentBox?: ContentBox, signal?: AbortSignal): Promise<ExportResult> {
+export async function exportMarkscheme(questions: Question[], load: LoadPdf, title: string, stamp?: string, hasContent?: HasContent, contentBox?: ContentBox, signal?: AbortSignal,
+  extra: { onProgress?: OnProgress; /** Adds the clean-layout header, footer and watermark before saving. */ decorate?: CleanOptions } = {}): Promise<ExportResult> {
   const out = await abortable(signal, () => PDFDocument.create());
   out.setTitle(title);
   out.setCreator('IB Question Filter');
   const sources = new Map<string, Promise<PDFDocument>>();
+  const embedder = new RegionEmbedder(out);
   const skipped: ExportResult['skipped'] = [];
   let current: PDFPage | null = null;
   let cursor = OUTPUT_PAGE_HEIGHT - OUTPUT_MARGIN;
@@ -139,10 +225,11 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
   const contentWidth = OUTPUT_PAGE_WIDTH - 2 * OUTPUT_MARGIN;
   const contentHeight = OUTPUT_PAGE_HEIGHT - 2 * OUTPUT_MARGIN;
 
-  for (const question of questions) {
+  for (const [index, question] of questions.entries()) {
     await checkpoint(signal);
     if (!question.answerSlices || !question.document.markschemeKey) {
       skipped.push({ question, reason: question.answerSkipReason ?? 'No answer slice is available for this question.' });
+      extra.onProgress?.(index + 1);
       continue;
     }
     const source = await openSource(load, question.document.markschemeKey, sources, signal);
@@ -176,13 +263,12 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
         cursor = OUTPUT_PAGE_HEIGHT - OUTPUT_MARGIN;
       }
       const region = userRect(box, shown);
-      const embedded = await abortable(signal, () => embedRegion(out, page, region));
       const y = cursor - displayHeight;
-      const p = placement(box, region, OUTPUT_MARGIN, y, scale);
-      if (embedded) current.drawPage(embedded, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate) });
+      embedder.draw(current, page, region, placement(box, region, OUTPUT_MARGIN, y, scale), scale);
       cursor = y - OUTPUT_GAP;
     }
     exported += 1;
+    extra.onProgress?.(index + 1);
   }
 
   if (skipped.length) {
@@ -204,6 +290,11 @@ export async function exportMarkscheme(questions: Question[], load: LoadPdf, tit
     }
   }
   await stampPages(out, stamp, signal);
+  if (extra.decorate) {
+    const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
+    const bold = await abortable(signal, () => out.embedFont(StandardFonts.HelveticaBold));
+    await decoratePages(out, { ...extra.decorate, signal, title, font, bold });
+  }
   return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported, skipped };
 }
 
@@ -248,6 +339,7 @@ export interface CleanOptions {
   stamp?: string;
   exportedAt?: Date;
   contentBox?: ContentBox;
+  onProgress?: OnProgress;
 }
 
 export async function exportQuestionsClean(questions: Question[], load: LoadPdf, title: string, options: CleanOptions): Promise<ExportResult> {
@@ -256,6 +348,7 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
   const font = await abortable(signal, () => out.embedFont(StandardFonts.Helvetica));
   const bold = await abortable(signal, () => out.embedFont(StandardFonts.HelveticaBold));
   const sources = new Map<string, Promise<PDFDocument>>();
+  const embedder = new RegionEmbedder(out);
   const contentWidth = A4_W - 2 * CLEAN_MARGIN_X;
   const contentHeight = CLEAN_TOP - CLEAN_BOTTOM;
   let page: PDFPage | null = null;
@@ -266,7 +359,7 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
     return page;
   };
 
-  for (const question of questions) {
+  for (const [index, question] of questions.entries()) {
     await checkpoint(signal);
     const key = question.document.paperKey;
     const source = await openSource(load, key, sources, signal);
@@ -301,13 +394,12 @@ export async function exportQuestionsClean(questions: Question[], load: LoadPdf,
         cursor -= 8;
       }
       const region = userRect(box, shown);
-      const embedded = await abortable(signal, () => embedRegion(out, src, region));
       const y = cursor - height * scale;
-      const p = placement(box, region, CLEAN_MARGIN_X, y, scale);
-      target.drawPage(embedded, { x: p.x, y: p.y, xScale: scale, yScale: scale, rotate: degrees(p.rotate) });
+      embedder.draw(target, src, region, placement(box, region, CLEAN_MARGIN_X, y, scale), scale);
       cursor = y;
       first = false;
     }
+    options.onProgress?.(index + 1);
   }
   await decoratePages(out, { ...options, title, font, bold });
   return { bytes: await abortable(signal, () => out.save()), pages: out.getPageCount(), exported: questions.length, skipped: [] };

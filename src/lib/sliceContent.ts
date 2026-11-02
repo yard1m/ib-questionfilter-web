@@ -50,14 +50,25 @@ export type ContentBox = (key: string, slice: Slice, signal?: AbortSignal) => Pr
 
 const RASTER_SCALE = 1.5;
 
+/** A slice to check ahead of the export loop, see `prefetch`. */
+export interface PlannedSlice {
+  key: string;
+  slice: Slice;
+}
+
+const sliceId = (key: string, s: Slice) => `${key}#${s.page}:${s.lower}:${s.upper}:${s.left ?? ''}:${s.right ?? ''}`;
+
 /**
  * Builds a content check backed by pdf.js text extraction. Call `close` when the export ends.
  * If text cannot be read, the slice is kept: a stray header page is better than a lost question.
+ * Results are cached per slice, so `prefetch` can work out a whole export's boxes ahead of (and in
+ * parallel with) the builders, which then only read the cache.
  */
 export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> }, signal?: AbortSignal) {
   type PdfTask = ReturnType<typeof open>;
   const docs = new Map<string, Promise<PDFDocumentProxy>>();
   const tasks = new Set<PdfTask>();
+  const taskFor = new Map<string, PdfTask>();
   const destruction = new Map<PdfTask, Promise<void>>();
   const renders = new Set<RenderTask>();
   const signals = new Map<AbortSignal, () => void>();
@@ -66,6 +77,7 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
   let closing: Promise<void> | undefined;
   const pages = new Map<string, Promise<TextBox[]>>();
   const rasters = new Map<string, Promise<{ raster: GrayRaster; width: number; height: number }>>();
+  const boxes = new Map<string, Promise<Slice | null>>();
   const guard = () => { if (closed) throw closeReason; };
   const destroy = (task: PdfTask) => {
     let work = destruction.get(task);
@@ -83,8 +95,10 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
     signals.clear();
     for (const render of renders) render.cancel();
     docs.clear();
+    taskFor.clear();
     pages.clear();
     rasters.clear();
+    boxes.clear();
     closing = Promise.all([...tasks].map(destroy)).then(() => { tasks.clear(); });
     return closing;
   };
@@ -107,6 +121,7 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
         const task = open(bytes);
         void task.promise.catch(() => undefined);
         tasks.add(task);
+        taskFor.set(key, task);
         // An opener may synchronously trigger cancellation before returning its task.
         if (closed) { await destroy(task); guard(); }
         const document = await task.promise;
@@ -154,9 +169,9 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
       if (!isEmptySlice(slice, t)) return true;
       // A short diagram has no extractable text. Only the furniture-masked raster can prove
       // that this candidate is genuinely empty; use the same crop logic as the clean exporter.
-      const r = await raster(key, slice.page);
+      const box = await boxOf(key, slice);
       guard();
-      return findContentBox(slice, { width: r.width, height: r.height }, r.raster, t) !== null;
+      return box !== null;
     } catch {
       guard(); // cancellation/closure is not an unreadable-page fallback
       return true;
@@ -196,17 +211,72 @@ export function pdfContentCheck(load: LoadPdf, open: (bytes: Uint8Array) => { pr
     }
     return found;
   };
+  const boxOf = (key: string, slice: Slice) => {
+    const id = sliceId(key, slice);
+    let found = boxes.get(id);
+    if (!found) {
+      found = (async () => {
+        const [r, t] = await Promise.all([raster(key, slice.page), text(key, slice.page)]);
+        guard();
+        return findContentBox(slice, { width: r.width, height: r.height }, r.raster, t);
+      })();
+      void found.catch(() => undefined);
+      boxes.set(id, found);
+    }
+    return found;
+  };
   const contentBox: ContentBox = async (key, slice, signal) => {
     watch(signal);
     try {
-      const [r, t] = await Promise.all([raster(key, slice.page), text(key, slice.page)]);
+      const box = await boxOf(key, slice);
       guard();
-      return findContentBox(slice, { width: r.width, height: r.height }, r.raster, t);
+      return box;
     } catch {
       guard();
       return slice; // unreadable page: keep the original crop rather than lose the question
     }
   };
+  /**
+   * Works out the checks for every planned slice, `concurrency` pages at a time in plan order, so the
+   * builders find the answers ready instead of waiting on one page at a time. Each page's raster
+   * is dropped once its slices are done, and each PDF is closed once its pages are done, so memory
+   * stays flat however large the export. `boxes` resolves content boxes (clean layout); otherwise
+   * only the emptiness checks for short slices are run. Never rejects: errors surface (or fall back)
+   * when the builders ask for the same slice.
+   */
+  const prefetch = async (items: PlannedSlice[], options: { concurrency: number; boxes: boolean }) => {
+    const groups = new Map<string, PlannedSlice[]>();
+    const remaining = new Map<string, number>();
+    for (const item of items) {
+      if (!options.boxes && item.slice.upper - item.slice.lower > MAX_EMPTY_SLICE_HEIGHT) continue;
+      const id = `${item.key}#${item.slice.page}`;
+      if (!groups.has(id)) {
+        groups.set(id, []);
+        remaining.set(item.key, (remaining.get(item.key) ?? 0) + 1);
+      }
+      groups.get(id)!.push(item);
+    }
+    const queue = [...groups.entries()];
+    const worker = async () => {
+      for (let next = queue.shift(); next && !closed; next = queue.shift()) {
+        const [id, group] = next;
+        await Promise.all(group.map(({ key, slice }) => (options.boxes ? boxOf(key, slice) : hasContent(key, slice)).catch(() => undefined)));
+        rasters.delete(id);
+        const key = group[0].key;
+        const left = (remaining.get(key) ?? 1) - 1;
+        remaining.set(key, left);
+        if (left === 0 && !closed) release(key);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, options.concurrency) }, worker));
+  };
+  // Closes a finished PDF. A later request for it (a slice outside the plan) simply reopens it.
+  const release = (key: string) => {
+    const task = taskFor.get(key);
+    docs.delete(key);
+    taskFor.delete(key);
+    if (task) void destroy(task);
+  };
   watch(signal);
-  return { hasContent, contentBox, close };
+  return { hasContent, contentBox, prefetch, close };
 }

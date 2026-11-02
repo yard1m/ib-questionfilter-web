@@ -1,4 +1,5 @@
 import { parseCatalog } from './catalog';
+import { parseSearchTexts } from './search';
 import type { CorpusSource, PdfMemoryCache } from './source';
 
 /**
@@ -13,6 +14,11 @@ export function localSource(cache: PdfMemoryCache): CorpusSource {
       const response = await fetch(`${base}catalog.json`);
       if (!response.ok) throw new Error('Local catalog is missing; run Scripts/build_web_corpus.py first');
       return parseCatalog(await response.json());
+    },
+    async loadSearch() {
+      const response = await fetch(`${base}search.json`);
+      if (!response.ok) throw new Error('Local search index is missing; run Scripts/build_web_corpus.py first');
+      return parseSearchTexts(await response.json());
     },
     loadPdf(key: string) {
       return cache.get(key, async () => {

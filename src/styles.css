@@ -515,3 +515,13 @@ html[data-design="archive"] .btn.practice-wrong { background: #9e3526; border-co
 .tag.kind-export, .tag.kind-markscheme { background: var(--ok-bg); color: var(--ok-ink); }
 .tag.kind-sign_in { background: var(--review-bg); color: var(--review-ink); }
 .tag.kind-visit { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+/* Word search and saved sets (2026-11-02). */
+.search-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.search-bar input { flex: 1 1 280px; min-width: 0; padding: 10px 12px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--panel, transparent); color: inherit; }
+.saved-panel { display: grid; gap: 10px; margin-bottom: 12px; }
+.saved-new { display: flex; flex-wrap: wrap; gap: 8px; }
+.saved-new input { flex: 1 1 220px; min-width: 0; padding: 8px 10px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+.saved-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.saved-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.saved-actions { display: flex; gap: 8px; align-items: center; }

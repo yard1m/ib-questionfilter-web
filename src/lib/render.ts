@@ -1,5 +1,8 @@
-import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// The legacy build: the modern one calls Map.prototype.getOrInsertComputed, which only the newest
+// browsers have. Elsewhere every page failed to render, so previews broke and clean exports
+// silently fell back to untrimmed crops (headers, barcodes, the hatched margin, blank space).
+import { GlobalWorkerOptions, PDFWorker, getDocument, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { Slice } from './catalog';
 import { displayedRect, displayedSize, normaliseRotation, type PageBox } from './geometry';
 
@@ -7,10 +10,14 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 
 const assets = `${import.meta.env.BASE_URL}pdfjs/`;
 
-/** Opens a PDF for rendering. pdf.js takes ownership of the buffer, so it gets a copy. */
-export function openForRendering(bytes: Uint8Array): { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> } {
+/**
+ * Opens a PDF for rendering. pdf.js takes ownership of the buffer, so it gets a copy. Without a
+ * `worker`, pdf.js starts a worker thread for this document alone.
+ */
+export function openForRendering(bytes: Uint8Array, worker?: PDFWorker): { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> } {
   const task = getDocument({
     data: bytes.slice(),
+    worker,
     enableXfa: false,
     standardFontDataUrl: `${assets}standard_fonts/`,
     cMapUrl: `${assets}cmaps/`,
@@ -20,6 +27,19 @@ export function openForRendering(bytes: Uint8Array): { promise: Promise<PDFDocum
     verbosity: 0,
   });
   return { promise: task.promise, destroy: () => task.destroy() };
+}
+
+/**
+ * A few shared pdf.js worker threads for an export, used in turn: papers are parsed and rendered in
+ * parallel without starting (and loading the worker script into) one thread per paper.
+ */
+export function renderWorkers(size: number): { open: (bytes: Uint8Array) => ReturnType<typeof openForRendering>; destroy: () => void } {
+  const workers = Array.from({ length: Math.max(1, size) }, () => new PDFWorker({ verbosity: 0 }));
+  let next = 0;
+  return {
+    open: (bytes) => openForRendering(bytes, workers[next++ % workers.length]),
+    destroy: () => { for (const worker of workers) worker.destroy(); },
+  };
 }
 
 /**

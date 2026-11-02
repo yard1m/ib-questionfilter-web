@@ -17,7 +17,7 @@ export function corpusPaths(webRoot, manifestPath) {
 
 export function corpusFile(root, file) {
   if (typeof file !== 'string' || isAbsolute(file) || !withinRoot(resolve(root, file), root)) throw new Error(`Manifest object escapes repository root: ${file}`);
-  const whitelisted = value => /^(papers\/.*\.pdf|markschemes\/.*\.pdf|\.web-corpus\/catalog\.json)$/.test(value);
+  const whitelisted = value => /^(papers\/.*\.pdf|markschemes\/.*\.pdf|\.web-corpus\/(catalog|search)\.json)$/.test(value);
   if (file.split('/').some(part => part === '..' || part === '.') || !whitelisted(file)) throw new Error(`Manifest file is not whitelisted: ${file}`);
   const path = realpathSync(resolve(root, file));
   if (!withinRoot(path, root)) throw new Error(`Manifest object escapes repository root: ${file}`);
@@ -38,6 +38,9 @@ export function validateManifest(manifest) {
     keys.add(item.key); files.add(item.file);
     if (item.key === manifest.catalogKey) {
       if (item.contentType !== 'application/json' || item.file !== '.web-corpus/catalog.json') throw new Error('Invalid catalog object');
+    } else if (item.key === `${manifest.prefix}/search.json`) {
+      // Word-search index (Scripts/build_search_index.py); optional for older corpora.
+      if (item.contentType !== 'application/json' || item.file !== '.web-corpus/search.json') throw new Error('Invalid search index object');
     } else if (item.contentType !== 'application/pdf' || !item.key.startsWith(`${manifest.prefix}/`) || !/^(papers|markschemes)\/.+\.pdf$/.test(item.key.slice(manifest.prefix.length + 1))) throw new Error(`Unexpected manifest object type for ${item.key}`);
   }
   if (!keys.has(manifest.catalogKey)) throw new Error('Manifest catalog object is missing');
@@ -61,7 +64,7 @@ export function validateCatalog(catalog, manifest) {
   if (subjects.size !== catalog.subjects.length || [...subjects].some(s => !['physics', 'chemistry', 'mathematics'].includes(s))) throw new Error('Invalid catalog subjects');
   const objects = new Map(manifest.objects.map(o => [o.key, o]));
   const documentIds = new Set();
-  const referenced = new Set([manifest.catalogKey]);
+  const referenced = new Set([manifest.catalogKey, ...(objects.has(`${manifest.prefix}/search.json`) ? [`${manifest.prefix}/search.json`] : [])]);
   for (const doc of catalog.documents) {
     if (!doc.id || documentIds.has(doc.id) || !subjects.has(doc.subject) || !Number.isInteger(doc.year) || !['HL', 'SL'].includes(doc.level)) throw new Error('Invalid catalog document');
     documentIds.add(doc.id);

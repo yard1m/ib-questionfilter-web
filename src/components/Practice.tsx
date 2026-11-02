@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Question, Slice } from '../lib/catalog';
 import { questionTitle } from '../lib/catalog';
 import { clearProgress, loadProgress, pickSet, record, saveProgress, topicsOf, weakestTopics, type Progress } from '../lib/practice';
-
-type LoadPdf = (key: string) => Promise<Uint8Array>;
+import { slicePages, type LoadPages, type LoadPdf } from '../lib/slicePages';
 
 /** Renders the given slices of one PDF into a host element (question or markscheme). */
-function Slices({ pdfKey, slices, loadPdf, label, onReadyChange }: { pdfKey: string; slices: Slice[]; loadPdf: LoadPdf; label: string; onReadyChange: (ready: boolean) => void }) {
+function Slices({ pdfKey, slices, loadPdf, loadPages, label, onReadyChange }: { pdfKey: string; slices: Slice[]; loadPdf: LoadPdf; loadPages?: LoadPages; label: string; onReadyChange: (ready: boolean) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   useEffect(() => {
@@ -18,7 +17,7 @@ function Slices({ pdfKey, slices, loadPdf, label, onReadyChange }: { pdfKey: str
     (async () => {
       try {
         const { openForRendering, renderSlice } = await import('../lib/render');
-        const bytes = await loadPdf(pdfKey);
+        const { bytes, slices: shown } = await slicePages(pdfKey, slices, loadPdf, loadPages);
         if (cancelled) return;
         const opened = openForRendering(bytes);
         destroy = () => { void opened.destroy(); };
@@ -28,7 +27,7 @@ function Slices({ pdfKey, slices, loadPdf, label, onReadyChange }: { pdfKey: str
         const width = Math.min(820, target.clientWidth || 820);
         const ratio = Math.min(window.devicePixelRatio || 1, 2.5);
         target.replaceChildren();
-        for (const slice of slices) {
+        for (const slice of shown) {
           const canvas = await renderSlice(doc, slice, width, ratio);
           if (cancelled) return;
           canvas.setAttribute('role', 'img');
@@ -46,7 +45,7 @@ function Slices({ pdfKey, slices, loadPdf, label, onReadyChange }: { pdfKey: str
       }
     })();
     return () => { cancelled = true; destroy?.(); };
-  }, [pdfKey, slices, loadPdf, label, onReadyChange]);
+  }, [pdfKey, slices, loadPdf, loadPages, label, onReadyChange]);
   return (
     <>
       {state === 'loading' && <p className="muted" role="status">Loading…</p>}
@@ -62,7 +61,7 @@ const COUNTS = [5, 10, 20, 40];
  * Practice mode: one question at a time, reveal the markscheme, self-mark. Progress is kept in
  * this browser (localStorage) and steers the next set towards weak topics.
  */
-export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf: LoadPdf; onClose: () => void }) {
+export function Practice({ pool, loadPdf, loadPages, onClose }: { pool: Question[]; loadPdf: LoadPdf; loadPages?: LoadPages; onClose: () => void }) {
   const [progress, setProgress] = useState<Progress>(() => loadProgress());
   const [count, setCount] = useState(10);
   const [mode, setMode] = useState<'weakest' | 'random'>('weakest');
@@ -165,12 +164,12 @@ export function Practice({ pool, loadPdf, onClose }: { pool: Question[]; loadPdf
               <strong>{questionTitle(current)}</strong>
               <span className="qtopics">{topicsOf(current).map((t) => <span key={t} className="tag">{t}</span>)}</span>
             </p>
-            <Slices key={current.id} pdfKey={current.document.paperKey} slices={current.questionSlices} loadPdf={loadPdf} label={`${current.label} question`} onReadyChange={setQuestionReady} />
+            <Slices key={current.id} pdfKey={current.document.paperKey} slices={current.questionSlices} loadPdf={loadPdf} loadPages={loadPages} label={`${current.label} question`} onReadyChange={setQuestionReady} />
             {revealed && (
               <div className="practice-answer">
                 <h3>Markscheme</h3>
                 {current.answerSlices && current.document.markschemeKey
-                  ? <Slices key={current.id} pdfKey={current.document.markschemeKey} slices={current.answerSlices} loadPdf={loadPdf} label={`${current.label} markscheme`} onReadyChange={setAnswerReady} />
+                  ? <Slices key={current.id} pdfKey={current.document.markschemeKey} slices={current.answerSlices} loadPdf={loadPdf} loadPages={loadPages} label={`${current.label} markscheme`} onReadyChange={setAnswerReady} />
                   : <p className="muted">{current.answerSkipReason ?? 'No markscheme answer is available for this question.'}</p>}
               </div>
             )}
