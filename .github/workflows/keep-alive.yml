@@ -1,0 +1,27 @@
+name: Keep Supabase awake
+
+# Free-plan Supabase projects pause after a week with no database activity, which takes the site
+# offline ("Could not reach the sign-in service"). This calls a tiny database function every two days.
+on:
+  schedule:
+    - cron: '17 6 */2 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call public.ping()
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SUPABASE_URL/rest/v1/rpc/ping" \
+              -H "apikey: $SUPABASE_KEY" -H 'Content-Type: application/json')
+            echo "attempt $attempt: HTTP $code"
+            [ "$code" = 200 ] && exit 0
+            sleep 30
+          done
+          echo "::error::Supabase did not answer; the project may be paused. Restore it in the Supabase dashboard."
+          exit 1
